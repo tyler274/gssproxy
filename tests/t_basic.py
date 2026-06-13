@@ -60,7 +60,7 @@ def run(testdir, env, conf, expected_failure=False):
                               stdin=pipe0[0], stdout=pipe1[1],
                               stderr=init_logfile, env=clienv,
                               preexec_fn=os.setsid, shell=True,
-                              executable="/bin/bash")
+                              executable=testlib.BASH)
         print("PID: %d\n" % p1.pid)
         print("Attach and start debugging, then press enter to start t_init.")
         input()
@@ -69,7 +69,7 @@ def run(testdir, env, conf, expected_failure=False):
                               stdin=pipe1[0], stdout=pipe0[1],
                               stderr=accept_logfile, env=svcenv,
                               preexec_fn=os.setsid, shell=True,
-                              executable="/bin/bash")
+                              executable=testlib.BASH)
         print("To resume tests if hung, kill pid %d\n" % p2.pid)
         p2.wait()
 
@@ -83,7 +83,7 @@ def run(testdir, env, conf, expected_failure=False):
                               stdin=pipe1[0], stdout=pipe0[1],
                               stderr=accept_logfile, env=svcenv,
                               preexec_fn=os.setsid, shell=True,
-                              executable="/bin/bash")
+                              executable=testlib.BASH)
         print("PID: %d\n" % p2.pid)
         print("Attach and start debugging, then press enter to start t_init.")
         input()
@@ -92,7 +92,7 @@ def run(testdir, env, conf, expected_failure=False):
                               stdin=pipe0[0], stdout=pipe1[1],
                               stderr=init_logfile, env=clienv,
                               preexec_fn=os.setsid, shell=True,
-                              executable="/bin/bash")
+                              executable=testlib.BASH)
         print("To resume tests if hung, kill pid %d\n" % p1.pid)
         p1.wait()
 
@@ -109,12 +109,12 @@ def run(testdir, env, conf, expected_failure=False):
                           stdin=pipe1[0], stdout=pipe0[1],
                           stderr=accept_logfile, env=svcenv,
                           preexec_fn=os.setsid, shell=True,
-                          executable="/bin/bash")
+                          executable=testlib.BASH)
     p1 = subprocess.Popen(init_cmd,
                           stdin=pipe0[0], stdout=pipe1[1],
                           stderr=init_logfile, env=clienv,
                           preexec_fn=os.setsid, shell=True,
-                          executable="/bin/bash")
+                          executable=testlib.BASH)
 
     try:
         p1.wait(testlib.testcase_wait)

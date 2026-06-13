@@ -22,6 +22,14 @@ debug_cmd_index = -1
 valgrind_cmd = "valgrind", "--track-origins=yes"
 valgrind_everywhere = False
 
+# The suite historically assumes an FHS layout (tools under /bin, /usr/bin,
+# /usr/lib/mit/sbin, ...) and a system shell at /bin/bash. To allow running in
+# sandboxed/non-FHS environments such as Nix builds, these can be overridden
+# through the environment; the defaults reproduce the previous behavior.
+_FHS_PATH = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/lib/mit/sbin"
+TESTPATH = (os.environ.get("PATH", "") + ":" + _FHS_PATH).strip(":")
+BASH = os.environ.get("GSSPROXY_TEST_BASH", "/bin/bash")
+
 try:
     from colorama import Fore, Style
 
@@ -107,7 +115,7 @@ def run_testcase_cmd(env, conf, cmd, name, expected_failure=False, wait=True):
 
     p1 = subprocess.Popen(run_cmd, stderr=subprocess.STDOUT, stdout=logfile,
                           env=testenv, preexec_fn=os.setsid, shell=True,
-                          executable="/bin/bash")
+                          executable=BASH)
 
     if not wait:
         cmd_index += 1
@@ -134,7 +142,7 @@ def rundebug_cmd(env, conf, cmd, name, expected_failure=False):
     run_cmd = debug_cmd + cmd
 
     returncode = subprocess.call(run_cmd, env=env, shell=True,
-                                 executable="/bin/bash")
+                                 executable=BASH)
 
     print_return(returncode, cmd_index, "(%d) %s" % (cmd_index, name),
                  expected_failure)
@@ -162,7 +170,15 @@ def setup_wrappers(base):
     with open(hosts_file, 'w+') as f:
         f.write('127.0.0.9 %s' % WRAP_HOSTNAME)
 
-    wenv = {'LD_PRELOAD': 'libsocket_wrapper.so libnss_wrapper.so',
+    # The loader resolves these by SONAME via the default search path. In
+    # environments where the wrapper libraries are not on that path (e.g. Nix),
+    # absolute paths can be supplied through the environment.
+    socket_wrapper_lib = os.environ.get('GSSPROXY_TEST_SOCKET_WRAPPER_LIB',
+                                        'libsocket_wrapper.so')
+    nss_wrapper_lib = os.environ.get('GSSPROXY_TEST_NSS_WRAPPER_LIB',
+                                     'libnss_wrapper.so')
+
+    wenv = {'LD_PRELOAD': '%s %s' % (socket_wrapper_lib, nss_wrapper_lib),
             'SOCKET_WRAPPER_DIR': wrapdir,
             'SOCKET_WRAPPER_DEFAULT_IFACE': '9',
             'NSS_WRAPPER_HOSTNAME': WRAP_HOSTNAME,
@@ -290,9 +306,14 @@ def write_ldap_krb5_config(testdir):
     os.makedirs(kdcdir)
 
     # Template LDAP config files
-    # Different distros do LDAP naming differently
+    # Different distros do LDAP naming differently; an explicit directory can
+    # also be provided through the environment for non-FHS layouts (e.g. Nix).
     schemadir = None
-    for path in ["/etc/openldap/schema", "/etc/ldap/schema"]:
+    schemadirs = ["/etc/openldap/schema", "/etc/ldap/schema"]
+    env_schemadir = os.environ.get("GSSPROXY_TEST_OPENLDAP_SCHEMA_DIR")
+    if env_schemadir:
+        schemadirs.insert(0, env_schemadir)
+    for path in schemadirs:
         if os.path.exists(path):
             schemadir = path
             break
@@ -300,9 +321,13 @@ def write_ldap_krb5_config(testdir):
         raise ValueError("Did not find LDAP schemas; is openldap installed?")
 
     k5schema = None
-    for path in ["/usr/share/doc/krb5-server-ldap*/kerberos.schema",
+    k5schemas = ["/usr/share/doc/krb5-server-ldap*/kerberos.schema",
                  "/usr/share/kerberos/ldap/kerberos.schema",
-                 "/usr/share/doc/krb5-kdc-ldap/kerberos.schema.gz"]:
+                 "/usr/share/doc/krb5-kdc-ldap/kerberos.schema.gz"]
+    env_k5schema = os.environ.get("GSSPROXY_TEST_KRB5_LDAP_SCHEMA")
+    if env_k5schema:
+        k5schemas.insert(0, env_k5schema)
+    for path in k5schemas:
         pathlist = glob.glob(path)
         if len(pathlist) > 0:
             k5schema = pathlist[0]
@@ -368,7 +393,7 @@ def setup_ldap(testdir, wrapenv):
     stashfile = os.path.join(testdir, "ldap_passwd")
     krb5conf = os.path.join(testdir, 'krb5.conf')
 
-    ldapenv = {'PATH': '/sbin:/bin:/usr/sbin:/usr/bin:/usr/lib/mit/sbin',
+    ldapenv = {'PATH': TESTPATH,
                'KRB5_CONFIG': krb5conf}
     ldapenv.update(wrapenv)
 
@@ -412,7 +437,7 @@ def setup_kdc(testdir, wrapenv):
     kdcstash = os.path.join(kdcdir, KDC_STASH)
     kdcdb = os.path.join(kdcdir, KDC_DBNAME)
 
-    kdcenv = {'PATH': '/sbin:/bin:/usr/sbin:/usr/bin:/usr/lib/mit/sbin',
+    kdcenv = {'PATH': TESTPATH,
               'KRB5_CONFIG': krb5conf,
               'KRB5_KDC_PROFILE': kdcconf}
     kdcenv.update(wrapenv)
@@ -613,15 +638,6 @@ def setup_gssapi_env(testdir, wrapenv):
     libgssapi_lib = os.path.join(libgssapi_dir, os.path.basename(lib))
     libgssapi_conf = os.path.join(libgssapi_mechd_dir, 'gssproxy-mech.conf')
 
-    # horrible, horrible hack to load our own configuration later
-    with open(lib, 'rb') as f:
-        data = binascii.hexlify(f.read())
-    with open(libgssapi_lib, 'wb') as f:
-        data = data.replace(binascii.hexlify(b'/etc/gss/mech.d'),
-                            binascii.hexlify(
-                                libgssapi_mechd_dir.encode("utf-8")))
-        f.write(binascii.unhexlify(data))
-
     shutil.copy('.libs/proxymech.so', libgssapi_dir)
     proxymech = os.path.join(libgssapi_dir, 'proxymech.so')
 
@@ -633,6 +649,28 @@ def setup_gssapi_env(testdir, wrapenv):
     # first swallow in wrapenv vars if any
     gssapi_env = dict()
     gssapi_env.update(wrapenv)
+
+    # The interposer mech config has to be loaded by libgssapi. The historical
+    # approach binary-patches the embedded "/etc/gss/mech.d" path in a private
+    # copy of libgssapi and LD_PRELOADs it. That only works when the embedded
+    # path is exactly that long, which is not the case on distributions that
+    # build krb5 with a non-FHS prefix (e.g. Nix). When requested, use the
+    # GSS_MECH_CONFIG environment variable instead, which MIT krb5 honors to
+    # load a mechanism config file directly.
+    if os.environ.get("GSSPROXY_TEST_USE_GSS_MECH_CONFIG"):
+        gssapi_env['GSS_MECH_CONFIG'] = libgssapi_conf
+        if 'LD_PRELOAD' in wrapenv:
+            gssapi_env['LD_PRELOAD'] = wrapenv['LD_PRELOAD']
+        return gssapi_env
+
+    # horrible, horrible hack to load our own configuration later
+    with open(lib, 'rb') as f:
+        data = binascii.hexlify(f.read())
+    with open(libgssapi_lib, 'wb') as f:
+        data = data.replace(binascii.hexlify(b'/etc/gss/mech.d'),
+                            binascii.hexlify(
+                                libgssapi_mechd_dir.encode("utf-8")))
+        f.write(binascii.unhexlify(data))
 
     # then augment preload if any
     ld_pre = ''
@@ -756,7 +794,7 @@ def setup_gssproxy(testdir, env):
     gproc = subprocess.Popen(full_command,
                              stdout=logfile, stderr=logfile,
                              env=gpenv, preexec_fn=os.setsid, shell=True,
-                             executable="/bin/bash")
+                             executable=BASH)
 
     if debug_gssproxy:
         print("PID: %d" % (gproc.pid))

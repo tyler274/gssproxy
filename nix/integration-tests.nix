@@ -1,0 +1,56 @@
+{ pkgs, gssproxy }:
+
+# Runs the upstream in-repo test suite (tests/runtests.py via `make check`)
+# inside a pure Nix build. The suite stands up a real MIT KDC with an OpenLDAP
+# backend, exercises acquire/accept/impersonation/constrained-delegation/
+# interposer/reload flows against a live gssproxy, and finally runs
+# userproxytest. socket_wrapper/nss_wrapper fake the network so no real
+# networking (or KVM) is required, which keeps this runnable on Hydra.
+#
+# The test scripts honor a handful of GSSPROXY_TEST_* overrides (added so the
+# suite can run outside an FHS layout); everything Nix-specific is wired up
+# through those here rather than by patching the suite at build time.
+
+let
+  # The test KDC uses the LDAP kdb backend, so it needs krb5 built with LDAP
+  # support (kdb5_ldap_util + the kldap plugin). nixpkgs' krb5 does not install
+  # the LDAP schema that provisioning the directory requires, so ship it too.
+  krb5Ldap = (pkgs.krb5.override { withLdap = true; }).overrideAttrs (old: {
+    postInstall = (old.postInstall or "") + ''
+      install -Dm444 plugins/kdb/ldap/libkdb_ldap/kerberos.schema \
+        "$out/share/gssproxy-tests/kerberos.schema"
+    '';
+  });
+in
+(gssproxy.override { krb5 = krb5Ldap; }).overrideAttrs (old: {
+  pname = "gssproxy-tests";
+
+  doCheck = true;
+
+  nativeCheckInputs = (old.nativeCheckInputs or [ ]) ++ (with pkgs; [
+    openldap
+    socket_wrapper
+    nss_wrapper
+    valgrind
+    which
+    gzip
+    python3
+  ]);
+
+  preCheck = (old.preCheck or "") + ''
+    # runtests.py is executed via its shebang by `make check`.
+    patchShebangs tests/runtests.py
+
+    # slapd ships in libexec, not on the default PATH.
+    export PATH="${pkgs.openldap}/libexec:$PATH"
+
+    export GSSPROXY_TEST_BASH="$(command -v bash)"
+    export GSSPROXY_TEST_OPENLDAP_SCHEMA_DIR="${pkgs.openldap}/etc/schema"
+    export GSSPROXY_TEST_KRB5_LDAP_SCHEMA="${krb5Ldap}/share/gssproxy-tests/kerberos.schema"
+    export GSSPROXY_TEST_SOCKET_WRAPPER_LIB="${pkgs.socket_wrapper}/lib/libsocket_wrapper.so"
+    export GSSPROXY_TEST_NSS_WRAPPER_LIB="${pkgs.nss_wrapper}/lib/libnss_wrapper.so"
+    # libgssapi embeds a long, non-FHS mech.d path under Nix, so the suite's
+    # binary-patch trick cannot work; load the interposer via GSS_MECH_CONFIG.
+    export GSSPROXY_TEST_USE_GSS_MECH_CONFIG=1
+  '';
+})
