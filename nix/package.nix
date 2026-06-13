@@ -66,6 +66,16 @@ stdenv.mkDerivation (finalAttrs: {
   ++ lib.optional (!withSelinux) "--with-selinux=no"
   ++ lib.optional withCap "--with-cap";
 
+  # gssproxy calls verto_cleanup() once, immediately before returning from
+  # main(), purely as exit-time leak hygiene. configure detects the symbol with
+  # AC_CHECK_FUNCS against the default linker path, where krb5 ships its own
+  # embedded libverto.so.0 built with BUILTIN_MODULE. That copy's verto_cleanup()
+  # frees a static `builtin_record` and its "" string literal, so the daemon
+  # aborts with "free(): invalid pointer" on every clean shutdown (SIGTERM).
+  # Force the feature off so the call is compiled out; the OS reclaims everything
+  # at exit anyway. (autoconf cache override for AC_CHECK_FUNCS(verto_cleanup).)
+  ac_cv_func_verto_cleanup = "no";
+
   # The compiled-in paths point at /etc and /var, but `make install` must write
   # only into $out. sysconfdir/localstatedir cover the generic autotools dirs;
   # the gssproxy-specific install dirs below are expanded from configure-time
