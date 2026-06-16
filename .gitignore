@@ -67,3 +67,6 @@ tests/t_impersonate
 tests/t_init
 tests/t_names
 tests/t_setcredopt
+direnv/
+result
+result-man
