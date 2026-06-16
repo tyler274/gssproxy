@@ -9,7 +9,7 @@
 //! `cargo kani` and never affects normal builds. See
 //! `rust/docs/formal-verification.md` for the rationale and how to run it.
 
-use crate::frame::{encode_header, parse_header, FrameError};
+use crate::frame::{FrameError, encode_header, parse_header};
 use crate::gssx::Opaque;
 use crate::rpc::{FRAGMENT_BIT, MAX_RPC_SIZE};
 use crate::xdr::{Xdr, XdrDecoder, XdrEncoder};

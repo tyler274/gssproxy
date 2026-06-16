@@ -177,29 +177,72 @@ fn parse_args_from<I: IntoIterator<Item = String>>(args: I) -> Parsed {
     Parsed::Run(a)
 }
 
+/// Install the global `tracing` subscriber, writing human-readable events to
+/// stderr (matching where the C daemon logs). The verbosity follows, in order
+/// of precedence: the `RUST_LOG` environment variable, then the C-compatible
+/// `-d`/`--debug-level` flags, defaulting to `info` (which still emits the
+/// lifecycle lines the test suite waits for).
+///
+/// Idempotent: uses `try_init`, so a second call (or a host that already set a
+/// subscriber) is a no-op rather than a panic.
+fn init_tracing(debug: bool, debug_level: i32) {
+    use tracing_subscriber::EnvFilter;
+
+    // `--debug-level` raises verbosity: >=2 -> trace, >=1 (or -d) -> debug.
+    let level = if debug_level >= 2 {
+        "trace"
+    } else if debug || debug_level >= 1 {
+        "debug"
+    } else {
+        "info"
+    };
+
+    // RUST_LOG wins outright; otherwise keep third-party crates (tokio, mio) at
+    // `info` and only turn our own crates up to the requested level.
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(format!(
+            "info,gssproxy_server={level},gssproxy_client={level}"
+        ))
+    });
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 fn load_config(path: &Path, socket: &str) -> Config {
     match Config::parse_file(path, socket) {
         Ok(cfg) => cfg,
         Err(e) => {
-            eprintln!("gssproxy: failed to load config {}: {e}", path.display());
+            tracing::error!(path = %path.display(), error = %e, "failed to load config");
             std::process::exit(1);
         }
     }
 }
 
 fn run(args: Args) {
+    init_tracing(args.debug, args.debug_level);
+
     let _ = (
         args.interactive,
         args.daemon,
-        args.debug,
-        args.debug_level,
         args.syslog_status,
         args.userproxy,
         &args.config_dir,
         args.idle_timeout,
     );
-    // Daemonization, debug toggling, and userproxy mode are not implemented;
-    // the daemon always runs in the foreground.
+    // Daemonization and userproxy mode are not implemented; the daemon always
+    // runs in the foreground.
+    tracing::debug!(
+        socket = %args.socket,
+        config = %args.config.display(),
+        daemon = args.daemon,
+        interactive = args.interactive,
+        userproxy = args.userproxy,
+        idle_timeout = args.idle_timeout,
+        "starting gssproxy daemon"
+    );
 
     // Validate the configuration up front (matches the C daemon, which refuses
     // to start with an unparsable or empty config).
@@ -209,7 +252,7 @@ fn run(args: Args) {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("gssproxy: failed to start tokio runtime: {e}");
+            tracing::error!(error = %e, "failed to start tokio runtime");
             std::process::exit(1);
         }
     };
@@ -219,7 +262,7 @@ fn run(args: Args) {
     });
 
     if let Err(e) = result {
-        eprintln!("gssproxy: {e}");
+        tracing::error!(error = %e, "daemon exited with error");
         std::process::exit(1);
     }
 }

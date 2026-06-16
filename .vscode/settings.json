@@ -21,5 +21,35 @@
   // built-in expander, which tracks whatever rustc the rust-analyzer package was
   // built with and may differ from the dev shell's rustc.
   "rust-analyzer.procMacro.server": "${workspaceFolder}/.vscode/rust-analyzer-proc-macro-srv.sh",
-  "rust-analyzer.restartServerOnConfigChange": true
+  "rust-analyzer.restartServerOnConfigChange": true,
+  // Pin rust-analyzer to the real workspace. Without this, rust-analyzer
+  // auto-discovers every Cargo.toml under the repo and loads the vendored crates
+  // in .kani/cargo/registry (bootstrapped by `nix run .#kani`) as spurious
+  // projects. files.exclude alone does not reliably stop that discovery.
+  "rust-analyzer.linkedProjects": [
+    "rust/Cargo.toml"
+  ],
+  // Don't let rust-analyzer scan the project-local Kani toolchain/registry.
+  // The bench crate's target dir is likewise not a source tree.
+  "rust-analyzer.files.exclude": [
+    ".kani",
+    "rust/gssproxy-bench/target"
+  ],
+  // rust-analyzer.files.exclude stops indexing, but Code still *watches* these
+  // dirs. Exclude them from the file watcher too so the large vendored Kani
+  // registry and build output don't churn CPU/inotify.
+  "files.watcherExclude": {
+    "**/.kani/**": true,
+    "**/rust/gssproxy-bench/target/**": true
+  },
+  // Hide the Kani toolchain/registry and bench output from the file explorer
+  // and from search so they don't clutter navigation or grep results.
+  "files.exclude": {
+    "**/.kani": true,
+    "**/rust/gssproxy-bench/target": true
+  },
+  "search.exclude": {
+    "**/.kani": true,
+    "**/rust/gssproxy-bench/target": true
+  }
 }

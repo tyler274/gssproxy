@@ -6,7 +6,7 @@
 //! result) ready to be record-marked by the caller.
 
 use gssproxy_proto::proc::*;
-use gssproxy_proto::rpc::{Message, MismatchInfo, OpaqueAuth, ReplyBody, GSSPROXY, GSSPROXYVERS};
+use gssproxy_proto::rpc::{GSSPROXY, GSSPROXYVERS, Message, MismatchInfo, OpaqueAuth, ReplyBody};
 use gssproxy_proto::xdr::{Xdr, XdrDecoder, XdrEncoder, XdrResult};
 
 use crate::call::CallContext;
@@ -23,31 +23,60 @@ pub fn handle_request(ctx: &CallContext, body: &[u8]) -> Option<Vec<u8>> {
     let mut d = XdrDecoder::new(body);
     let msg = Message::decode(&mut d).ok()?;
     if !msg.is_call {
+        tracing::debug!("dropping non-call RPC message");
         return None;
     }
     let call = msg.call.as_ref()?;
     let xid = msg.xid;
 
     if call.prog != GSSPROXY {
+        tracing::warn!(xid, prog = call.prog, "unknown RPC program");
         return Some(reply_accept_other(xid, PROG_UNAVAIL));
     }
     if call.vers != GSSPROXYVERS {
+        tracing::warn!(xid, vers = call.vers, "RPC program version mismatch");
         return Some(reply_prog_mismatch(xid));
     }
     let proc = match GssxProc::from_u32(call.proc_num) {
         Some(p) => p,
-        None => return Some(reply_accept_other(xid, PROC_UNAVAIL)),
+        None => {
+            tracing::warn!(xid, proc = call.proc_num, "unknown gssproxy procedure");
+            return Some(reply_accept_other(xid, PROC_UNAVAIL));
+        }
     };
 
+    // One span per request: every handler log line is attributed to the peer,
+    // the procedure, and the xid without each handler re-logging that context.
+    let span = tracing::debug_span!(
+        "rpc",
+        ?proc,
+        xid,
+        uid = ctx.uid,
+        pid = ctx.pid,
+        service = ctx
+            .service
+            .as_ref()
+            .map(|s| s.name.as_str())
+            .unwrap_or("<none>")
+    );
+    let _enter = span.enter();
+    tracing::debug!(req_len = body.len(), "handling request");
+
     match encode_proc_reply(ctx, proc, xid, &mut d) {
-        Ok(bytes) => Some(bytes),
+        Ok(bytes) => {
+            tracing::debug!(res_len = bytes.len(), "request handled");
+            Some(bytes)
+        }
         // Argument failed to decode: RPC GARBAGE_ARGS.
-        Err(_) => Some(reply_accept_other(xid, GARBAGE_ARGS)),
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to decode procedure arguments (GARBAGE_ARGS)");
+            Some(reply_accept_other(xid, GARBAGE_ARGS))
+        }
     }
 }
 
 macro_rules! run {
-    ($ctx:expr, $d:expr, $xid:expr, $arg:ty, $handler:path) => {{
+    ($ctx:expr_2021, $d:expr_2021, $xid:expr_2021, $arg:ty, $handler:path) => {{
         let arg = <$arg as Xdr>::decode($d)?;
         Ok(gssproxy_proto::encode_reply($xid, &$handler($ctx, arg)))
     }};

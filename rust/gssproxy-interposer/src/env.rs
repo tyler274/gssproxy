@@ -6,7 +6,7 @@
 
 use std::ffi::{CStr, CString};
 
-extern "C" {
+unsafe extern "C" {
     fn secure_getenv(name: *const libc::c_char) -> *mut libc::c_char;
 }
 

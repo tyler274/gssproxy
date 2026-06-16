@@ -8,7 +8,7 @@
 use std::sync::OnceLock;
 
 use gssapi_sys::consts;
-use gssapi_sys::sys::{self, gss_OID, gss_OID_set, gss_buffer_t, OM_uint32};
+use gssapi_sys::sys::{self, OM_uint32, gss_OID, gss_OID_set, gss_buffer_t};
 use gssproxy_client::gpm;
 
 use crate::behavior::{self, Behavior};
@@ -55,12 +55,13 @@ fn cache() -> &'static MechCache {
     CACHE.get_or_init(|| {
         let (maj, _, res) = gpm::indicate_mechs();
         if maj != COMPLETE {
+            tracing::warn!(major = maj, "indicate_mechs failed; mech cache unavailable");
             return MechCache {
                 ok: false,
                 info: Vec::new(),
             };
         }
-        let info = res
+        let info: Vec<MechInfo> = res
             .mechs
             .into_iter()
             .map(|m| MechInfo {
@@ -77,6 +78,7 @@ fn cache() -> &'static MechCache {
                 saslname_mech_desc: m.saslname_mech_desc.as_slice().to_vec(),
             })
             .collect();
+        tracing::debug!(mechs = info.len(), "mech cache initialised from daemon");
         MechCache { ok: true, info }
     })
 }
@@ -85,18 +87,20 @@ fn cache() -> &'static MechCache {
 /// per-mech search: `Err((GSS_S_FAILURE, EIO))` if the cache could not be
 /// built, `Err((GSS_S_BAD_MECH, 0))` if the mech is unknown.
 unsafe fn find_mech(mech_type: gss_OID) -> Result<&'static MechInfo, (u32, u32)> {
-    let c = cache();
-    if !c.ok {
-        return Err((consts::GSS_S_FAILURE, libc::EIO as u32));
+    unsafe {
+        let c = cache();
+        if !c.ok {
+            return Err((consts::GSS_S_FAILURE, libc::EIO as u32));
+        }
+        let bytes = match convert::oid_bytes(mech_type) {
+            Some(b) => b,
+            None => return Err((consts::GSS_S_BAD_MECH, 0)),
+        };
+        c.info
+            .iter()
+            .find(|m| m.mech.as_slice() == bytes)
+            .ok_or((consts::GSS_S_BAD_MECH, 0))
     }
-    let bytes = match convert::oid_bytes(mech_type) {
-        Some(b) => b,
-        None => return Err((consts::GSS_S_BAD_MECH, 0)),
-    };
-    c.info
-        .iter()
-        .find(|m| m.mech.as_slice() == bytes)
-        .ok_or((consts::GSS_S_BAD_MECH, 0))
 }
 
 // ===========================================================================
@@ -104,138 +108,144 @@ unsafe fn find_mech(mech_type: gss_OID) -> Result<&'static MechInfo, (u32, u32)>
 // ===========================================================================
 
 /// `gssi_indicate_mechs`: never actually called; present for completeness.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_indicate_mechs(
     minor_status: *mut OM_uint32,
     _mech_set: *mut gss_OID_set,
 ) -> OM_uint32 {
-    if !minor_status.is_null() {
-        *minor_status = 0;
+    unsafe {
+        if !minor_status.is_null() {
+            *minor_status = 0;
+        }
+        consts::GSS_S_FAILURE
     }
-    consts::GSS_S_FAILURE
 }
 
 /// `gssi_inquire_names_for_mech`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_inquire_names_for_mech(
     minor_status: *mut OM_uint32,
     mech_type: gss_OID,
     mech_names: *mut gss_OID_set,
 ) -> OM_uint32 {
-    let behavior = behavior::get();
-    let mut tmaj = COMPLETE;
-    let mut tmin = 0u32;
-    let mut maj;
-    let mut min;
+    unsafe {
+        let behavior = behavior::get();
+        let mut tmaj = COMPLETE;
+        let mut tmin = 0u32;
+        let mut maj;
+        let mut min;
 
-    if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
+        if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
+            let sp = special::special_mech(mech_type as *const _);
+            let mut m: OM_uint32 = 0;
+            maj = sys::gss_inquire_names_for_mech(&mut m, sp, mech_names);
+            min = m;
+            if maj == COMPLETE || behavior == Behavior::LocalOnly {
+                set_min(minor_status, min);
+                return maj;
+            }
+            tmaj = maj;
+            tmin = min;
+        }
+
+        // Remote: served from the cached mech table.
+        let (rmaj, rmin) = match find_mech(mech_type) {
+            Ok(info) => {
+                *mech_names = convert::build_oid_set(&info.name_types);
+                (COMPLETE, 0)
+            }
+            Err(e) => e,
+        };
+        maj = rmaj;
+        min = rmin;
+        if maj == COMPLETE || behavior == Behavior::RemoteOnly {
+            if maj != COMPLETE && tmaj != COMPLETE {
+                maj = tmaj;
+                min = tmin;
+            }
+            set_min(minor_status, min);
+            return maj;
+        }
+
         let sp = special::special_mech(mech_type as *const _);
         let mut m: OM_uint32 = 0;
         maj = sys::gss_inquire_names_for_mech(&mut m, sp, mech_names);
         min = m;
-        if maj == COMPLETE || behavior == Behavior::LocalOnly {
-            set_min(minor_status, min);
-            return maj;
-        }
-        tmaj = maj;
-        tmin = min;
-    }
-
-    // Remote: served from the cached mech table.
-    let (rmaj, rmin) = match find_mech(mech_type) {
-        Ok(info) => {
-            *mech_names = convert::build_oid_set(&info.name_types);
-            (COMPLETE, 0)
-        }
-        Err(e) => e,
-    };
-    maj = rmaj;
-    min = rmin;
-    if maj == COMPLETE || behavior == Behavior::RemoteOnly {
         if maj != COMPLETE && tmaj != COMPLETE {
             maj = tmaj;
             min = tmin;
         }
         set_min(minor_status, min);
-        return maj;
+        maj
     }
-
-    let sp = special::special_mech(mech_type as *const _);
-    let mut m: OM_uint32 = 0;
-    maj = sys::gss_inquire_names_for_mech(&mut m, sp, mech_names);
-    min = m;
-    if maj != COMPLETE && tmaj != COMPLETE {
-        maj = tmaj;
-        min = tmin;
-    }
-    set_min(minor_status, min);
-    maj
 }
 
 /// `gssi_inquire_attrs_for_mech`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_inquire_attrs_for_mech(
     minor_status: *mut OM_uint32,
     mech: gss_OID,
     mech_attrs: *mut gss_OID_set,
     known_mech_attrs: *mut gss_OID_set,
 ) -> OM_uint32 {
-    let behavior = behavior::get();
-    let mut tmaj = COMPLETE;
-    let mut tmin = 0u32;
-    let mut maj;
-    let mut min;
+    unsafe {
+        let behavior = behavior::get();
+        let mut tmaj = COMPLETE;
+        let mut tmin = 0u32;
+        let mut maj;
+        let mut min;
 
-    if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
+        if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
+            let sp = special::special_mech(mech as *const _);
+            let mut m: OM_uint32 = 0;
+            maj = sys::gss_inquire_attrs_for_mech(&mut m, sp, mech_attrs, known_mech_attrs);
+            min = m;
+            if maj == COMPLETE || behavior == Behavior::LocalOnly {
+                set_min(minor_status, min);
+                return maj;
+            }
+            tmaj = maj;
+            tmin = min;
+        }
+
+        let (rmaj, rmin) = match find_mech(mech) {
+            Ok(info) => {
+                if !mech_attrs.is_null() {
+                    *mech_attrs = convert::build_oid_set(&info.mech_attrs);
+                }
+                if !known_mech_attrs.is_null() {
+                    *known_mech_attrs = convert::build_oid_set(&info.known_mech_attrs);
+                }
+                (COMPLETE, 0)
+            }
+            Err(e) => e,
+        };
+        maj = rmaj;
+        min = rmin;
+        if maj == COMPLETE || behavior == Behavior::RemoteOnly {
+            if maj != COMPLETE && tmaj != COMPLETE {
+                maj = tmaj;
+                min = tmin;
+            }
+            set_min(minor_status, min);
+            return maj;
+        }
+
         let sp = special::special_mech(mech as *const _);
         let mut m: OM_uint32 = 0;
         maj = sys::gss_inquire_attrs_for_mech(&mut m, sp, mech_attrs, known_mech_attrs);
         min = m;
-        if maj == COMPLETE || behavior == Behavior::LocalOnly {
-            set_min(minor_status, min);
-            return maj;
-        }
-        tmaj = maj;
-        tmin = min;
-    }
-
-    let (rmaj, rmin) = match find_mech(mech) {
-        Ok(info) => {
-            if !mech_attrs.is_null() {
-                *mech_attrs = convert::build_oid_set(&info.mech_attrs);
-            }
-            if !known_mech_attrs.is_null() {
-                *known_mech_attrs = convert::build_oid_set(&info.known_mech_attrs);
-            }
-            (COMPLETE, 0)
-        }
-        Err(e) => e,
-    };
-    maj = rmaj;
-    min = rmin;
-    if maj == COMPLETE || behavior == Behavior::RemoteOnly {
         if maj != COMPLETE && tmaj != COMPLETE {
             maj = tmaj;
             min = tmin;
         }
         set_min(minor_status, min);
-        return maj;
+        maj
     }
-
-    let sp = special::special_mech(mech as *const _);
-    let mut m: OM_uint32 = 0;
-    maj = sys::gss_inquire_attrs_for_mech(&mut m, sp, mech_attrs, known_mech_attrs);
-    min = m;
-    if maj != COMPLETE && tmaj != COMPLETE {
-        maj = tmaj;
-        min = tmin;
-    }
-    set_min(minor_status, min);
-    maj
 }
 
 /// `gssi_inquire_saslname_for_mech`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_inquire_saslname_for_mech(
     minor_status: *mut OM_uint32,
     desired_mech: gss_OID,
@@ -243,13 +253,52 @@ pub unsafe extern "C" fn gssi_inquire_saslname_for_mech(
     mech_name: gss_buffer_t,
     mech_description: gss_buffer_t,
 ) -> OM_uint32 {
-    let behavior = behavior::get();
-    let mut tmaj = COMPLETE;
-    let mut tmin = 0u32;
-    let mut maj;
-    let mut min;
+    unsafe {
+        let behavior = behavior::get();
+        let mut tmaj = COMPLETE;
+        let mut tmin = 0u32;
+        let mut maj;
+        let mut min;
 
-    if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
+        if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
+            let sp = special::special_mech(desired_mech as *const _);
+            let mut m: OM_uint32 = 0;
+            maj = sys::gss_inquire_saslname_for_mech(
+                &mut m,
+                sp,
+                sasl_mech_name,
+                mech_name,
+                mech_description,
+            );
+            min = m;
+            if maj == COMPLETE || behavior == Behavior::LocalOnly {
+                set_min(minor_status, min);
+                return maj;
+            }
+            tmaj = maj;
+            tmin = min;
+        }
+
+        let (rmaj, rmin) = match find_mech(desired_mech) {
+            Ok(info) => {
+                convert::write_buffer(sasl_mech_name, &info.saslname_sasl_mech_name);
+                convert::write_buffer(mech_name, &info.saslname_mech_name);
+                convert::write_buffer(mech_description, &info.saslname_mech_desc);
+                (COMPLETE, 0)
+            }
+            Err(e) => e,
+        };
+        maj = rmaj;
+        min = rmin;
+        if maj == COMPLETE || behavior == Behavior::RemoteOnly {
+            if maj != COMPLETE && tmaj != COMPLETE {
+                maj = tmaj;
+                min = tmin;
+            }
+            set_min(minor_status, min);
+            return maj;
+        }
+
         let sp = special::special_mech(desired_mech as *const _);
         let mut m: OM_uint32 = 0;
         maj = sys::gss_inquire_saslname_for_mech(
@@ -260,49 +309,17 @@ pub unsafe extern "C" fn gssi_inquire_saslname_for_mech(
             mech_description,
         );
         min = m;
-        if maj == COMPLETE || behavior == Behavior::LocalOnly {
-            set_min(minor_status, min);
-            return maj;
-        }
-        tmaj = maj;
-        tmin = min;
-    }
-
-    let (rmaj, rmin) = match find_mech(desired_mech) {
-        Ok(info) => {
-            convert::write_buffer(sasl_mech_name, &info.saslname_sasl_mech_name);
-            convert::write_buffer(mech_name, &info.saslname_mech_name);
-            convert::write_buffer(mech_description, &info.saslname_mech_desc);
-            (COMPLETE, 0)
-        }
-        Err(e) => e,
-    };
-    maj = rmaj;
-    min = rmin;
-    if maj == COMPLETE || behavior == Behavior::RemoteOnly {
         if maj != COMPLETE && tmaj != COMPLETE {
             maj = tmaj;
             min = tmin;
         }
         set_min(minor_status, min);
-        return maj;
+        maj
     }
-
-    let sp = special::special_mech(desired_mech as *const _);
-    let mut m: OM_uint32 = 0;
-    maj =
-        sys::gss_inquire_saslname_for_mech(&mut m, sp, sasl_mech_name, mech_name, mech_description);
-    min = m;
-    if maj != COMPLETE && tmaj != COMPLETE {
-        maj = tmaj;
-        min = tmin;
-    }
-    set_min(minor_status, min);
-    maj
 }
 
 /// `gssi_inquire_mech_for_saslname`: not supported.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_inquire_mech_for_saslname(
     _minor_status: *mut OM_uint32,
     _sasl_mech_name: gss_buffer_t,
@@ -312,7 +329,7 @@ pub unsafe extern "C" fn gssi_inquire_mech_for_saslname(
 }
 
 /// `gssi_display_status`: only minor (mech-code) statuses are handled.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_display_status(
     minor_status: *mut OM_uint32,
     status_value: OM_uint32,
@@ -321,61 +338,67 @@ pub unsafe extern "C" fn gssi_display_status(
     message_context: *mut OM_uint32,
     status_string: gss_buffer_t,
 ) -> OM_uint32 {
-    if status_type != GSS_C_MECH_CODE {
-        return consts::GSS_S_BAD_STATUS;
-    }
-
-    let val = unmap_error(status_value);
-    let mctx = if message_context.is_null() {
-        0
-    } else {
-        *message_context
-    };
-    let (maj, min, text) = gpm::display_status(val, GSS_C_MECH_CODE, mctx);
-
-    if maj == consts::GSS_S_UNAVAILABLE {
-        // Fall back to the local mechglue (no mech specified, as in C).
-        return sys::gss_display_status(
-            minor_status,
-            val,
-            GSS_C_MECH_CODE,
-            std::ptr::null_mut(),
-            message_context,
-            status_string,
-        );
-    }
-
-    if maj == COMPLETE {
-        convert::write_buffer(status_string, &text);
-        if !message_context.is_null() {
-            *message_context = 0;
+    unsafe {
+        if status_type != GSS_C_MECH_CODE {
+            return consts::GSS_S_BAD_STATUS;
         }
+
+        let val = unmap_error(status_value);
+        let mctx = if message_context.is_null() {
+            0
+        } else {
+            *message_context
+        };
+        let (maj, min, text) = gpm::display_status(val, GSS_C_MECH_CODE, mctx);
+
+        if maj == consts::GSS_S_UNAVAILABLE {
+            // Fall back to the local mechglue (no mech specified, as in C).
+            return sys::gss_display_status(
+                minor_status,
+                val,
+                GSS_C_MECH_CODE,
+                std::ptr::null_mut(),
+                message_context,
+                status_string,
+            );
+        }
+
+        if maj == COMPLETE {
+            convert::write_buffer(status_string, &text);
+            if !message_context.is_null() {
+                *message_context = 0;
+            }
+        }
+        if !minor_status.is_null() {
+            *minor_status = min;
+        }
+        maj
     }
-    if !minor_status.is_null() {
-        *minor_status = min;
-    }
-    maj
 }
 
 /// `gssi_mech_invoke`: always bridged to the local mechanism.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_mech_invoke(
     minor_status: *mut OM_uint32,
     desired_mech: gss_OID,
     desired_object: gss_OID,
     value: gss_buffer_t,
 ) -> OM_uint32 {
-    let sp = special::special_mech(desired_mech as *const _);
-    let mut min: OM_uint32 = 0;
-    let maj = gssspi_mech_invoke(&mut min, sp, desired_object, value);
-    if !minor_status.is_null() {
-        *minor_status = map_error(min);
+    unsafe {
+        let sp = special::special_mech(desired_mech as *const _);
+        let mut min: OM_uint32 = 0;
+        let maj = gssspi_mech_invoke(&mut min, sp, desired_object, value);
+        if !minor_status.is_null() {
+            *minor_status = map_error(min);
+        }
+        maj
     }
-    maj
 }
 
 unsafe fn set_min(minor_status: *mut OM_uint32, min: u32) {
-    if !minor_status.is_null() {
-        *minor_status = map_error(min);
+    unsafe {
+        if !minor_status.is_null() {
+            *minor_status = map_error(min);
+        }
     }
 }

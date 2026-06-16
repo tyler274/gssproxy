@@ -365,7 +365,7 @@ impl Xdr for GssxCtx {
     }
 }
 
-/// `gssx_handle` — a union discriminated by `handle_type`.
+/// `gssx_handle` - a union discriminated by `handle_type`.
 pub const GSSX_C_HANDLE_SEC_CTX: i32 = 0;
 pub const GSSX_C_HANDLE_CRED: i32 = 1;
 

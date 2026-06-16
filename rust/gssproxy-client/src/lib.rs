@@ -1,7 +1,7 @@
 //! `gssproxy-client`: the client-side transport that talks to the gssproxy
 //! daemon over its Unix socket.
 //!
-//! This is the Rust port of `src/client/gpm_common.c` — specifically the
+//! This is the Rust port of `src/client/gpm_common.c` - specifically the
 //! connection-management and `gpm_make_call` machinery. The per-procedure
 //! `gpm_*` wrappers in C also performed the GSSAPI <-> gssx conversion; in the
 //! Rust split that conversion lives in the interposer (`gssproxy-interposer`),
@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use gssproxy_proto::frame::{encode_header, parse_header};
 use gssproxy_proto::proc::GssxProc;
-use gssproxy_proto::rpc::{Message, ReplyBody, MAX_RPC_SIZE};
+use gssproxy_proto::rpc::{MAX_RPC_SIZE, Message, ReplyBody};
 use gssproxy_proto::xdr::{Xdr, XdrDecoder};
 
 pub mod gpm;
@@ -100,7 +100,7 @@ impl From<io::Error> for GpmError {
 /// Result alias for client transport operations.
 pub type Result<T> = std::result::Result<T, GpmError>;
 
-extern "C" {
+unsafe extern "C" {
     // glibc's secure_getenv (not exposed by the libc crate on all versions).
     fn secure_getenv(name: *const libc::c_char) -> *mut libc::c_char;
 }
@@ -201,7 +201,8 @@ impl ClientConn {
 
     /// Open the socket and record the owning identity (C: `gpm_open_socket`).
     fn connect(&mut self) -> Result<()> {
-        let stream = UnixStream::connect(socket_path())?;
+        let path = socket_path();
+        let stream = UnixStream::connect(&path)?;
         stream.set_read_timeout(Some(RESPONSE_TIMEOUT))?;
         stream.set_write_timeout(Some(RESPONSE_TIMEOUT))?;
         // SAFETY: always-safe syscalls.
@@ -209,6 +210,7 @@ impl ClientConn {
         self.uid = unsafe { libc::geteuid() };
         self.gid = unsafe { libc::getegid() };
         self.stream = Some(stream);
+        tracing::debug!(socket = %path.to_string_lossy(), "connected to gssproxy daemon");
         Ok(())
     }
 
@@ -250,6 +252,7 @@ impl ClientConn {
                 Ok(buf) => return Ok(buf),
                 Err(GpmError::Io(e)) if is_retryable(&e) => {
                     // Close and reopen before trying again (C: gpm_retry_socket).
+                    tracing::debug!(error = %e, "transient socket error; reconnecting and retrying");
                     self.disconnect();
                     last_err = Some(GpmError::Io(e));
                     continue;
@@ -292,6 +295,13 @@ pub fn make_call<A: Xdr, R: Xdr>(proc: GssxProc, arg: &A) -> Result<R> {
     let xid = conn.next_xid();
     let body = gssproxy_proto::encode_request(xid, proc as u32, arg);
 
+    // One span per RPC; argument/result payloads carry tokens and credentials,
+    // so only the procedure, xid, and byte lengths are recorded - never the
+    // contents.
+    let span = tracing::debug_span!("gpm_call", ?proc, xid);
+    let _enter = span.enter();
+    tracing::debug!(req_len = body.len(), "sending request to daemon");
+
     let reply = conn.transact(&body)?;
     // The lock is intentionally held across the whole conversation, matching
     // the C client which serialises all traffic on a single socket.
@@ -300,13 +310,18 @@ pub fn make_call<A: Xdr, R: Xdr>(proc: GssxProc, arg: &A) -> Result<R> {
     let mut d = XdrDecoder::new(&reply);
     let msg = Message::decode(&mut d).map_err(GpmError::Decode)?;
     if msg.xid != xid || msg.is_call {
+        tracing::warn!(reply_xid = msg.xid, "reply xid mismatch or unexpected call");
         return Err(GpmError::BadReply);
     }
     match msg.reply {
         Some(ReplyBody::AcceptedSuccess { .. }) => {}
-        _ => return Err(GpmError::BadReply),
+        _ => {
+            tracing::warn!("daemon returned a non-success RPC reply");
+            return Err(GpmError::BadReply);
+        }
     }
 
+    tracing::debug!(res_len = reply.len(), "received reply from daemon");
     R::decode(&mut d).map_err(GpmError::Decode)
 }
 
@@ -316,14 +331,14 @@ mod tests {
     use gssproxy_proto::proc::{
         ArgIndicateMechs, ArgInitSecContext, ResIndicateMechs, ResInitSecContext,
     };
-    use gssproxy_proto::rpc::{ReplyBody, FRAGMENT_BIT, GSSPROXY, GSSPROXYVERS, RPC_VERS};
+    use gssproxy_proto::rpc::{FRAGMENT_BIT, GSSPROXY, GSSPROXYVERS, RPC_VERS, ReplyBody};
     use gssproxy_proto::xdr::XdrEncoder;
-    use gssproxy_proto::{encode_reply, encode_request, frame, Message};
+    use gssproxy_proto::{Message, encode_reply, encode_request, frame};
     use proptest::prelude::*;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::thread::{self, JoinHandle};
 
     // make_call drives a *process-global* connection keyed on the
@@ -352,7 +367,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let sock = dir.join("s.sock");
         let _ = std::fs::remove_file(&sock);
-        std::env::set_var("GSSPROXY_SOCKET", &sock);
+        // SAFETY: the env-mutating tests are serialised via `serial()`, so no
+        // other thread is reading the environment concurrently.
+        unsafe { std::env::set_var("GSSPROXY_SOCKET", &sock) };
         reset_connection();
         (dir, sock)
     }
@@ -745,11 +762,15 @@ mod tests {
     #[test]
     fn socket_path_defaults_when_env_unset() {
         let _g = serial();
-        std::env::remove_var("GSSPROXY_SOCKET");
-        assert_eq!(socket_path(), OsString::from(GP_SOCKET_NAME));
-        std::env::set_var("GSSPROXY_SOCKET", "/tmp/custom.sock");
-        assert_eq!(socket_path(), OsString::from("/tmp/custom.sock"));
-        std::env::remove_var("GSSPROXY_SOCKET");
+        // SAFETY: env-mutating tests hold the `serial()` lock, so no other
+        // thread reads the environment concurrently.
+        unsafe {
+            std::env::remove_var("GSSPROXY_SOCKET");
+            assert_eq!(socket_path(), OsString::from(GP_SOCKET_NAME));
+            std::env::set_var("GSSPROXY_SOCKET", "/tmp/custom.sock");
+            assert_eq!(socket_path(), OsString::from("/tmp/custom.sock"));
+            std::env::remove_var("GSSPROXY_SOCKET");
+        }
     }
 
     #[test]

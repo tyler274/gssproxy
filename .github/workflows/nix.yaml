@@ -24,6 +24,8 @@ jobs:
         run: nix build -L .#checks.x86_64-linux.rust-fmt
       - name: cargo clippy -D warnings
         run: nix build -L .#checks.x86_64-linux.clippy
+      - name: cargo-deny (licenses, bans, sources)
+        run: nix build -L .#checks.x86_64-linux.cargo-deny
 
   rust-tests:
     name: Rust tests (property-based + chaos/fuzz)

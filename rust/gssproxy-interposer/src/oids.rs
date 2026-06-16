@@ -9,7 +9,7 @@
 use std::os::raw::c_void;
 use std::sync::OnceLock;
 
-use gssapi_sys::sys::{gss_OID_desc, OM_uint32};
+use gssapi_sys::sys::{OM_uint32, gss_OID_desc};
 
 // DER element bytes for each mechanism OID (see gss_plugin.c).
 
@@ -70,17 +70,19 @@ pub fn interposer() -> *const gss_OID_desc {
 /// `oid` must be null or point to a valid `gss_OID_desc` whose `elements`
 /// buffer is at least `length` bytes.
 pub unsafe fn oid_bytes<'a>(oid: *const gss_OID_desc) -> Option<&'a [u8]> {
-    if oid.is_null() {
-        return None;
+    unsafe {
+        if oid.is_null() {
+            return None;
+        }
+        let d = &*oid;
+        if d.elements.is_null() {
+            return Some(&[]);
+        }
+        Some(std::slice::from_raw_parts(
+            d.elements as *const u8,
+            d.length as usize,
+        ))
     }
-    let d = &*oid;
-    if d.elements.is_null() {
-        return Some(&[]);
-    }
-    Some(std::slice::from_raw_parts(
-        d.elements as *const u8,
-        d.length as usize,
-    ))
 }
 
 /// `gss_oid_equal` equivalent: compare two OIDs by length and bytes.
@@ -88,9 +90,11 @@ pub unsafe fn oid_bytes<'a>(oid: *const gss_OID_desc) -> Option<&'a [u8]> {
 /// # Safety
 /// Both pointers must satisfy the contract of [`oid_bytes`].
 pub unsafe fn oid_equal(a: *const gss_OID_desc, b: *const gss_OID_desc) -> bool {
-    match (oid_bytes(a), oid_bytes(b)) {
-        (Some(x), Some(y)) => x == y,
-        _ => false,
+    unsafe {
+        match (oid_bytes(a), oid_bytes(b)) {
+            (Some(x), Some(y)) => x == y,
+            _ => false,
+        }
     }
 }
 
@@ -103,11 +107,13 @@ pub unsafe fn oid_equal(a: *const gss_OID_desc, b: *const gss_OID_desc) -> bool 
 /// `mech` must satisfy the contract of [`oid_bytes`].
 #[allow(dead_code)]
 pub unsafe fn is_krb5_oid(mech: *const gss_OID_desc) -> bool {
-    let b = base();
-    oid_equal(mech, &b.krb5)
-        || oid_equal(mech, &b.krb5_old)
-        || oid_equal(mech, &b.krb5_wrong)
-        || oid_equal(mech, &b.iakerb)
+    unsafe {
+        let b = base();
+        oid_equal(mech, &b.krb5)
+            || oid_equal(mech, &b.krb5_old)
+            || oid_equal(mech, &b.krb5_wrong)
+            || oid_equal(mech, &b.iakerb)
+    }
 }
 
 #[cfg(test)]
@@ -241,7 +247,7 @@ mod prop_tests {
     // Helper that treats a null-elements descriptor as the empty slice (matching
     // oid_bytes), so the property test can compare against the original Vec.
     unsafe fn oids_oid_bytes_or_empty<'a>(oid: *const gss_OID_desc) -> &'a [u8] {
-        oid_bytes(oid).unwrap_or(&[])
+        unsafe { oid_bytes(oid).unwrap_or(&[]) }
     }
 }
 

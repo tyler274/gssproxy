@@ -15,11 +15,11 @@
 //!      corrupt buffers). When a decode happens to succeed, re-encoding it
 //!      must reproduce a canonical, self-consistent buffer.
 
-use gssproxy_proto::frame::{encode_header, parse_header, FrameError};
+use gssproxy_proto::frame::{FrameError, encode_header, parse_header};
 use gssproxy_proto::gssx::*;
 use gssproxy_proto::proc::*;
 use gssproxy_proto::rpc::{
-    CallHeader, Message, MismatchInfo, OpaqueAuth, ReplyBody, FRAGMENT_BIT, MAX_RPC_SIZE,
+    CallHeader, FRAGMENT_BIT, MAX_RPC_SIZE, Message, MismatchInfo, OpaqueAuth, ReplyBody,
 };
 use gssproxy_proto::xdr::{Xdr, XdrDecoder, XdrEncoder};
 use proptest::prelude::*;
@@ -887,7 +887,7 @@ fn fuzzy_words() -> impl Strategy<Value = Vec<u8>> {
 // ---- round-trip property tests ---------------------------------------------
 
 macro_rules! roundtrip_tests {
-    ($($name:ident => $strat:expr;)*) => {
+    ($($name:ident => $strat:expr_2021;)*) => {
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(128))]
             $(

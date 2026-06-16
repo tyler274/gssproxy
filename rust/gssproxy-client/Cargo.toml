@@ -10,6 +10,7 @@ description = "Client transport for talking to the gssproxy daemon over its Unix
 gssproxy-proto.workspace = true
 gssapi-sys.workspace = true
 libc.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 proptest = "1.11.0"

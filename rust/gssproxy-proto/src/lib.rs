@@ -13,6 +13,7 @@
 //!   - [`frame`]: SunRPC record-marking framing used on the Unix socket.
 //!   - [`gssx`]: the shared `gssx_*` data types.
 //!   - [`proc`]: per-procedure `gssx_arg_*`/`gssx_res_*` types + proc numbers.
+//!   - [`redact`]: helpers for logging secret-bearing buffers as lengths only.
 //!
 //! A full request on the wire is: `frame(rpc_call_header ++ xdr(arg))`, and the
 //! reply is `frame(rpc_reply_header ++ xdr(res))`.
@@ -20,6 +21,7 @@
 pub mod frame;
 pub mod gssx;
 pub mod proc;
+pub mod redact;
 pub mod rpc;
 pub mod xdr;
 
@@ -28,8 +30,8 @@ pub mod xdr;
 #[cfg(kani)]
 mod verification;
 
-pub use frame::{frame, parse_header, FrameError};
-pub use rpc::{Message, GSSPROXY, GSSPROXYVERS, MAX_RPC_SIZE};
+pub use frame::{FrameError, frame, parse_header};
+pub use rpc::{GSSPROXY, GSSPROXYVERS, MAX_RPC_SIZE, Message};
 pub use xdr::{Xdr, XdrDecoder, XdrEncoder, XdrError, XdrResult};
 
 /// Encode a complete client request body (RPC call header + procedure args)

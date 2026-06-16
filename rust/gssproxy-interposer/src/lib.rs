@@ -26,6 +26,7 @@ mod ctxlife;
 mod env;
 mod error;
 mod handle;
+mod logging;
 mod mechstatus;
 mod msgprot;
 mod names;
@@ -33,7 +34,7 @@ mod oids;
 mod special;
 
 use gssapi_sys::sys::{
-    self, gss_OID, gss_OID_set, gss_create_empty_oid_set, gss_release_oid_set, OM_uint32,
+    self, OM_uint32, gss_OID, gss_OID_set, gss_create_empty_oid_set, gss_release_oid_set,
 };
 
 // Re-export the foundation pieces so the (forthcoming) gssi_* handler modules
@@ -46,7 +47,7 @@ const GSS_S_COMPLETE: OM_uint32 = 0;
 /// Add one of our base OIDs to `set`, returning false on allocation failure.
 unsafe fn add_member(set: *mut gss_OID_set, member: gss_OID) -> bool {
     let mut minor: OM_uint32 = 0;
-    let maj = sys::gss_add_oid_set_member(&mut minor, member, set);
+    let maj = unsafe { sys::gss_add_oid_set_member(&mut minor, member, set) };
     maj == GSS_S_COMPLETE
 }
 
@@ -59,43 +60,48 @@ unsafe fn add_member(set: *mut gss_OID_set, member: gss_OID) -> bool {
 /// # Safety
 /// Called by the C mechglue with a valid `gss_OID` (or null). Exported with C
 /// ABI.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gss_mech_interposer(mech_type: gss_OID) -> gss_OID_set {
-    if !behavior::enabled() {
-        return std::ptr::null_mut();
+    unsafe {
+        if !behavior::enabled() {
+            return std::ptr::null_mut();
+        }
+        logging::init();
+        if !oids::oid_equal(oids::interposer(), mech_type) {
+            tracing::trace!("gss_mech_interposer called for a non-gssproxy OID");
+            return std::ptr::null_mut();
+        }
+        tracing::debug!(behavior = ?behavior::get(), "interposer enabled; claiming krb5/IAKERB mechs");
+
+        let mut minor: OM_uint32 = 0;
+        let mut set: gss_OID_set = std::ptr::null_mut();
+        if gss_create_empty_oid_set(&mut minor, &mut set) != GSS_S_COMPLETE {
+            return std::ptr::null_mut();
+        }
+
+        let base = oids::base();
+        let ok = add_member(&mut set, &base.krb5 as *const _ as gss_OID)
+            && add_member(&mut set, &base.krb5_old as *const _ as gss_OID)
+            && add_member(&mut set, &base.krb5_wrong as *const _ as gss_OID)
+            && add_member(&mut set, &base.iakerb as *const _ as gss_OID);
+
+        if !ok {
+            let mut min2: OM_uint32 = 0;
+            gss_release_oid_set(&mut min2, &mut set);
+            return std::ptr::null_mut();
+        }
+
+        // While we are here, seed the special-mech list from the mechs we proxy
+        // (C: gpp_init_special_available_mechs).
+        special::init_special_available_mechs(set);
+
+        set
     }
-    if !oids::oid_equal(oids::interposer(), mech_type) {
-        return std::ptr::null_mut();
-    }
-
-    let mut minor: OM_uint32 = 0;
-    let mut set: gss_OID_set = std::ptr::null_mut();
-    if gss_create_empty_oid_set(&mut minor, &mut set) != GSS_S_COMPLETE {
-        return std::ptr::null_mut();
-    }
-
-    let base = oids::base();
-    let ok = add_member(&mut set, &base.krb5 as *const _ as gss_OID)
-        && add_member(&mut set, &base.krb5_old as *const _ as gss_OID)
-        && add_member(&mut set, &base.krb5_wrong as *const _ as gss_OID)
-        && add_member(&mut set, &base.iakerb as *const _ as gss_OID);
-
-    if !ok {
-        let mut min2: OM_uint32 = 0;
-        gss_release_oid_set(&mut min2, &mut set);
-        return std::ptr::null_mut();
-    }
-
-    // While we are here, seed the special-mech list from the mechs we proxy
-    // (C: gpp_init_special_available_mechs).
-    special::init_special_available_mechs(set);
-
-    set
 }
 
 /// `gssi_internal_release_oid`: claim ownership (and suppress release) of OIDs
-/// that belong to us — the interposer OID itself and any registered
-/// regular/special OID — so the mechglue does not try to free them.
+/// that belong to us - the interposer OID itself and any registered
+/// regular/special OID - so the mechglue does not try to free them.
 ///
 /// Returns `GSS_S_COMPLETE` (and nulls `*oid`) when the OID is ours, otherwise
 /// `GSS_S_CONTINUE_NEEDED` so the mechglue keeps looking.
@@ -103,32 +109,34 @@ pub unsafe extern "C" fn gss_mech_interposer(mech_type: gss_OID) -> gss_OID_set 
 /// # Safety
 /// `minor_status` and `oid` must be valid pointers; `*oid` must be null or a
 /// valid `gss_OID`. Exported with C ABI.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_internal_release_oid(
     minor_status: *mut OM_uint32,
     oid: *mut gss_OID,
 ) -> OM_uint32 {
-    if !minor_status.is_null() {
-        *minor_status = 0;
-    }
-    if oid.is_null() {
-        return sys::GSS_S_CONTINUE_NEEDED;
-    }
+    unsafe {
+        if !minor_status.is_null() {
+            *minor_status = 0;
+        }
+        if oid.is_null() {
+            return sys::GSS_S_CONTINUE_NEEDED;
+        }
 
-    let cur = *oid as *const sys::gss_OID_desc;
+        let cur = *oid as *const sys::gss_OID_desc;
 
-    // The static interposer OID (compared by identity, as in C).
-    if std::ptr::eq(cur, oids::interposer()) {
-        *oid = std::ptr::null_mut();
-        return GSS_S_COMPLETE;
+        // The static interposer OID (compared by identity, as in C).
+        if std::ptr::eq(cur, oids::interposer()) {
+            *oid = std::ptr::null_mut();
+            return GSS_S_COMPLETE;
+        }
+
+        if special::is_registered_ptr(cur) {
+            *oid = std::ptr::null_mut();
+            return GSS_S_COMPLETE;
+        }
+
+        // Not ours: let the mechglue continue (gpm_mech_is_static is handled by the
+        // real mechglue once the data path forwards static mech OIDs).
+        sys::GSS_S_CONTINUE_NEEDED
     }
-
-    if special::is_registered_ptr(cur) {
-        *oid = std::ptr::null_mut();
-        return GSS_S_COMPLETE;
-    }
-
-    // Not ours: let the mechglue continue (gpm_mech_is_static is handled by the
-    // real mechglue once the data path forwards static mech OIDs).
-    sys::GSS_S_CONTINUE_NEEDED
 }

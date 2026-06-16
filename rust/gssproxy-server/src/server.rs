@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use gssproxy_proto::{frame, parse_header};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinHandle;
 
 use crate::call::CallContext;
@@ -41,28 +41,30 @@ pub async fn run(
     reconcile_listeners(&main_socket, &config, &registry, &mut listeners);
 
     // The test suite waits for this exact substring in the daemon log before it
-    // starts driving requests (see `gssproxy_reload` in tests/testlib.py).
-    eprintln!("gssproxy: Initialization complete.");
+    // starts driving requests (see `gssproxy_reload` in tests/testlib.py), so
+    // the message text is kept verbatim even though it is now a tracing event.
+    tracing::info!("Initialization complete.");
 
     let mut hup = match signal(SignalKind::hangup()) {
         Ok(s) => s,
         Err(e) => {
             // Without a reload handler we can still serve indefinitely.
-            eprintln!("gssproxy: cannot install SIGHUP handler: {e}");
+            tracing::warn!(error = %e, "cannot install SIGHUP handler; running without config reload");
             std::future::pending::<()>().await;
             unreachable!()
         }
     };
 
     while hup.recv().await.is_some() {
+        tracing::debug!("SIGHUP received, reloading configuration");
         match Config::parse_file(&config_path, &main_socket) {
             Ok(cfg) => {
                 *config.lock().unwrap() = cfg;
                 reconcile_listeners(&main_socket, &config, &registry, &mut listeners);
                 // The test suite waits for this exact substring after a SIGHUP.
-                eprintln!("gssproxy: New config loaded successfully.");
+                tracing::info!("New config loaded successfully.");
             }
-            Err(e) => eprintln!("gssproxy: config reload failed: {e}"),
+            Err(e) => tracing::error!(error = %e, "config reload failed"),
         }
     }
 
@@ -99,6 +101,7 @@ fn reconcile_listeners(
         if let Some(handle) = listeners.remove(&path) {
             handle.abort();
             let _ = std::fs::remove_file(&path);
+            tracing::debug!(socket = %path, "stopped listening on socket no longer in config");
         }
     }
 
@@ -109,9 +112,10 @@ fn reconcile_listeners(
         }
         match spawn_listener(path.clone(), config.clone(), registry.clone()) {
             Ok(handle) => {
+                tracing::debug!(socket = %path, "listening on socket");
                 listeners.insert(path, handle);
             }
-            Err(e) => eprintln!("gssproxy: failed to bind socket {path}: {e}"),
+            Err(e) => tracing::error!(socket = %path, error = %e, "failed to bind socket"),
         }
     }
 }
@@ -135,12 +139,12 @@ fn spawn_listener(
                     let ctx = resolve_context(&stream, &config, &registry, &path);
                     tokio::spawn(async move {
                         if let Err(e) = handle_conn(stream, ctx).await {
-                            eprintln!("gssproxy: connection error: {e}");
+                            tracing::debug!(error = %e, "connection error");
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("gssproxy: accept error on {path}: {e}");
+                    tracing::error!(socket = %path, error = %e, "accept error; shutting down listener");
                     break;
                 }
             }
@@ -162,13 +166,22 @@ fn resolve_context(
             CallContext::resolve(&guard, socket, cred.uid(), cred.gid(), cred.pid())
         }
         Err(e) => {
-            eprintln!("gssproxy: failed to read peer credentials: {e}");
+            tracing::warn!(socket = %socket, error = %e, "failed to read peer credentials; treating peer as anonymous");
             CallContext::anonymous(socket)
         }
     };
     if let Some(svc) = &ctx.service {
         ctx.creds = registry.get_or_init(svc);
     }
+    tracing::debug!(
+        socket = %ctx.socket,
+        uid = ctx.uid,
+        gid = ctx.gid,
+        pid = ctx.pid,
+        program = ctx.program.as_deref().unwrap_or("?"),
+        service = ctx.service.as_ref().map(|s| s.name.as_str()).unwrap_or("<none>"),
+        "accepted connection"
+    );
     ctx
 }
 

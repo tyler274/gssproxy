@@ -1,10 +1,10 @@
 //! gssproxy-specific GSSAPI constants that `libgssapi-sys` does not provide.
 //!
-//! Everything `libgssapi-sys` already exports as a proper bindgen item — the
+//! Everything `libgssapi-sys` already exports as a proper bindgen item - the
 //! request/return flag bits (`GSS_C_DELEG_FLAG`…), credential usage
 //! (`GSS_C_BOTH/INITIATE/ACCEPT`), status selectors (`GSS_C_GSS_CODE`,
 //! `GSS_C_MECH_CODE`), the error/supplementary offsets, `GSS_S_COMPLETE`, the
-//! supplementary token bits, `GSS_C_INDEFINITE`, `GSS_C_QOP_DEFAULT` — should be
+//! supplementary token bits, `GSS_C_INDEFINITE`, `GSS_C_QOP_DEFAULT` - should be
 //! used directly via [`crate::sys`]. This module adds only what bindgen cannot
 //! emit: the computed shifted routine-error codes, and the well-known OID byte
 //! strings (which the sys crate exposes as runtime symbols, not byte arrays).

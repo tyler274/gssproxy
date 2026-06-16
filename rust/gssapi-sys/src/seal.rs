@@ -66,7 +66,7 @@ unsafe impl Sync for CredHandle {}
 impl CredHandle {
     /// Derive the sealing key for a service. Tries the given keytab (falling
     /// back to the default keytab), and if no usable key is found, generates an
-    /// ephemeral random AES256 key — exactly the fallback order in
+    /// ephemeral random AES256 key - exactly the fallback order in
     /// `gp_init_creds_handle`.
     pub fn new(keytab: Option<&str>) -> Result<CredHandle> {
         unsafe {
@@ -108,81 +108,88 @@ impl CredHandle {
     }
 
     unsafe fn seal_inner(&self, context: krb5_context, plain: &[u8]) -> Result<Vec<u8>> {
-        let kb = self.keyblock();
-        let len = plain.len();
+        unsafe {
+            let kb = self.keyblock();
+            let len = plain.len();
 
-        let mut cipherlen: usize = 0;
-        check(
-            krb5_c_encrypt_length(context, self.enctype, len, &mut cipherlen),
-            "krb5_c_encrypt_length",
-        )?;
-        let mut padcheck: usize = 0;
-        check(
-            krb5_c_encrypt_length(context, self.enctype, len + 1, &mut padcheck),
-            "krb5_c_encrypt_length",
-        )?;
-
-        // Determine how much explicit padding is needed (see the long comment in
-        // gp_export.c): if adding one byte doesn't grow the ciphertext, the
-        // enctype pads internally and we must add our own deterministic padding.
-        let mut pad: u8 = 0;
-        if padcheck == cipherlen {
-            pad = ENC_MIN_PAD_LEN;
+            let mut cipherlen: usize = 0;
             check(
-                krb5_c_encrypt_length(context, self.enctype, len + pad as usize, &mut cipherlen),
+                krb5_c_encrypt_length(context, self.enctype, len, &mut cipherlen),
                 "krb5_c_encrypt_length",
             )?;
-            for i in 0..15usize {
+            let mut padcheck: usize = 0;
+            check(
+                krb5_c_encrypt_length(context, self.enctype, len + 1, &mut padcheck),
+                "krb5_c_encrypt_length",
+            )?;
+
+            // Determine how much explicit padding is needed (see the long comment in
+            // gp_export.c): if adding one byte doesn't grow the ciphertext, the
+            // enctype pads internally and we must add our own deterministic padding.
+            let mut pad: u8 = 0;
+            if padcheck == cipherlen {
+                pad = ENC_MIN_PAD_LEN;
                 check(
                     krb5_c_encrypt_length(
                         context,
                         self.enctype,
-                        len + pad as usize + i + 1,
-                        &mut padcheck,
+                        len + pad as usize,
+                        &mut cipherlen,
                     ),
                     "krb5_c_encrypt_length",
                 )?;
-                if padcheck > cipherlen {
-                    pad += i as u8;
-                    break;
+                for i in 0..15usize {
+                    check(
+                        krb5_c_encrypt_length(
+                            context,
+                            self.enctype,
+                            len + pad as usize + i + 1,
+                            &mut padcheck,
+                        ),
+                        "krb5_c_encrypt_length",
+                    )?;
+                    if padcheck > cipherlen {
+                        pad += i as u8;
+                        break;
+                    }
                 }
             }
+
+            let data_in: Vec<u8> = if pad != 0 {
+                let mut v = Vec::with_capacity(len + pad as usize);
+                v.extend_from_slice(plain);
+                v.extend(std::iter::repeat_n(pad, pad as usize));
+                v
+            } else {
+                plain.to_vec()
+            };
+
+            let input = krb5_data {
+                magic: 0,
+                length: data_in.len() as c_uint,
+                data: data_in.as_ptr() as *mut c_char,
+            };
+
+            let mut ct = vec![0u8; cipherlen];
+            let mut output: krb5_enc_data = std::mem::zeroed();
+            output.ciphertext.length = cipherlen as c_uint;
+            output.ciphertext.data = ct.as_mut_ptr() as *mut c_char;
+
+            check(
+                krb5_c_encrypt(
+                    context,
+                    &kb,
+                    KRB5_KEYUSAGE_APP_DATA_ENCRYPT as krb5_keyusage,
+                    ptr::null(),
+                    &input,
+                    &mut output,
+                ),
+                "krb5_c_encrypt",
+            )?;
+
+            ct.truncate(output.ciphertext.length as usize);
+            Ok(ct)
         }
-
-        let data_in: Vec<u8> = if pad != 0 {
-            let mut v = Vec::with_capacity(len + pad as usize);
-            v.extend_from_slice(plain);
-            v.extend(std::iter::repeat_n(pad, pad as usize));
-            v
-        } else {
-            plain.to_vec()
-        };
-
-        let input = krb5_data {
-            magic: 0,
-            length: data_in.len() as c_uint,
-            data: data_in.as_ptr() as *mut c_char,
-        };
-
-        let mut ct = vec![0u8; cipherlen];
-        let mut output: krb5_enc_data = std::mem::zeroed();
-        output.ciphertext.length = cipherlen as c_uint;
-        output.ciphertext.data = ct.as_mut_ptr() as *mut c_char;
-
-        check(
-            krb5_c_encrypt(
-                context,
-                &kb,
-                KRB5_KEYUSAGE_APP_DATA_ENCRYPT as krb5_keyusage,
-                ptr::null(),
-                &input,
-                &mut output,
-            ),
-            "krb5_c_encrypt",
-        )?;
-
-        ct.truncate(output.ciphertext.length as usize);
-        Ok(ct)
     }
 
     /// Decrypt a blob produced by [`CredHandle::seal`].
@@ -197,49 +204,51 @@ impl CredHandle {
     }
 
     unsafe fn unseal_inner(&self, context: krb5_context, cipher: &[u8]) -> Result<Vec<u8>> {
-        let kb = self.keyblock();
+        unsafe {
+            let kb = self.keyblock();
 
-        let mut enc: krb5_enc_data = std::mem::zeroed();
-        enc.enctype = self.enctype;
-        enc.ciphertext.length = cipher.len() as c_uint;
-        enc.ciphertext.data = cipher.as_ptr() as *mut c_char;
+            let mut enc: krb5_enc_data = std::mem::zeroed();
+            enc.enctype = self.enctype;
+            enc.ciphertext.length = cipher.len() as c_uint;
+            enc.ciphertext.data = cipher.as_ptr() as *mut c_char;
 
-        // The plaintext is no longer than the ciphertext; krb5_c_decrypt trims
-        // output.length to the real value.
-        let mut out = vec![0u8; cipher.len()];
-        let mut data_out = krb5_data {
-            magic: 0,
-            length: out.len() as c_uint,
-            data: out.as_mut_ptr() as *mut c_char,
-        };
+            // The plaintext is no longer than the ciphertext; krb5_c_decrypt trims
+            // output.length to the real value.
+            let mut out = vec![0u8; cipher.len()];
+            let mut data_out = krb5_data {
+                magic: 0,
+                length: out.len() as c_uint,
+                data: out.as_mut_ptr() as *mut c_char,
+            };
 
-        check(
-            krb5_c_decrypt(
-                context,
-                &kb,
-                KRB5_KEYUSAGE_APP_DATA_ENCRYPT as krb5_keyusage,
-                ptr::null(),
-                &enc,
-                &mut data_out,
-            ),
-            "krb5_c_decrypt",
-        )?;
+            check(
+                krb5_c_decrypt(
+                    context,
+                    &kb,
+                    KRB5_KEYUSAGE_APP_DATA_ENCRYPT as krb5_keyusage,
+                    ptr::null(),
+                    &enc,
+                    &mut data_out,
+                ),
+                "krb5_c_decrypt",
+            )?;
 
-        let mut length = data_out.length as usize;
-        // Strip our explicit padding (mirrors gp_decrypt_buffer): the last byte
-        // is the pad length; it is valid only if every padding byte equals it.
-        if length >= 1 {
-            let i = length - 1;
-            let pad = out[i];
-            if pad >= ENC_MIN_PAD_LEN && (pad as usize) < i {
-                let all_match = (0..pad as usize).all(|j| out[i - j] == pad);
-                if all_match {
-                    length -= pad as usize;
+            let mut length = data_out.length as usize;
+            // Strip our explicit padding (mirrors gp_decrypt_buffer): the last byte
+            // is the pad length; it is valid only if every padding byte equals it.
+            if length >= 1 {
+                let i = length - 1;
+                let pad = out[i];
+                if pad >= ENC_MIN_PAD_LEN && (pad as usize) < i {
+                    let all_match = (0..pad as usize).all(|j| out[i - j] == pad);
+                    if all_match {
+                        length -= pad as usize;
+                    }
                 }
             }
+            out.truncate(length);
+            Ok(out)
         }
-        out.truncate(length);
-        Ok(out)
     }
 }
 
@@ -248,83 +257,86 @@ unsafe fn derive_from_keytab(
     context: krb5_context,
     keytab: Option<&str>,
 ) -> Option<(krb5_enctype, Vec<u8>)> {
-    let mut ktid: krb5_keytab = ptr::null_mut();
+    unsafe {
+        let mut ktid: krb5_keytab = ptr::null_mut();
 
-    let mut resolved = false;
-    if let Some(kt) = keytab {
-        if let Ok(c) = CString::new(kt) {
-            if krb5_kt_resolve(context, c.as_ptr(), &mut ktid) == 0 {
-                resolved = true;
-            }
+        let mut resolved = false;
+        if let Some(kt) = keytab
+            && let Ok(c) = CString::new(kt)
+            && krb5_kt_resolve(context, c.as_ptr(), &mut ktid) == 0
+        {
+            resolved = true;
         }
-    }
-    if !resolved && krb5_kt_default(context, &mut ktid) != 0 {
-        return None;
-    }
+        if !resolved && krb5_kt_default(context, &mut ktid) != 0 {
+            return None;
+        }
 
-    if krb5_kt_have_content(context, ktid) != 0 {
-        krb5_kt_close(context, ktid);
-        return None;
-    }
+        if krb5_kt_have_content(context, ktid) != 0 {
+            krb5_kt_close(context, ktid);
+            return None;
+        }
 
-    let mut permitted: *mut krb5_enctype = ptr::null_mut();
-    if krb5_get_permitted_enctypes(context, &mut permitted) != 0 {
-        krb5_kt_close(context, ktid);
-        return None;
-    }
+        let mut permitted: *mut krb5_enctype = ptr::null_mut();
+        if krb5_get_permitted_enctypes(context, &mut permitted) != 0 {
+            krb5_kt_close(context, ktid);
+            return None;
+        }
 
-    let mut found: Option<(krb5_enctype, Vec<u8>)> = None;
-    let mut cursor: krb5_kt_cursor = ptr::null_mut();
-    if krb5_kt_start_seq_get(context, ktid, &mut cursor) == 0 {
-        loop {
-            let mut entry: krb5_keytab_entry = std::mem::zeroed();
-            if krb5_kt_next_entry(context, ktid, &mut entry, &mut cursor) != 0 {
-                break;
-            }
-            if found.is_none() {
-                let mut p = permitted;
-                while *p != 0 {
-                    if *p == entry.key.enctype {
-                        let bytes = std::slice::from_raw_parts(
-                            entry.key.contents,
-                            entry.key.length as usize,
-                        )
-                        .to_vec();
-                        found = Some((entry.key.enctype, bytes));
-                        break;
+        let mut found: Option<(krb5_enctype, Vec<u8>)> = None;
+        let mut cursor: krb5_kt_cursor = ptr::null_mut();
+        if krb5_kt_start_seq_get(context, ktid, &mut cursor) == 0 {
+            loop {
+                let mut entry: krb5_keytab_entry = std::mem::zeroed();
+                if krb5_kt_next_entry(context, ktid, &mut entry, &mut cursor) != 0 {
+                    break;
+                }
+                if found.is_none() {
+                    let mut p = permitted;
+                    while *p != 0 {
+                        if *p == entry.key.enctype {
+                            let bytes = std::slice::from_raw_parts(
+                                entry.key.contents,
+                                entry.key.length as usize,
+                            )
+                            .to_vec();
+                            found = Some((entry.key.enctype, bytes));
+                            break;
+                        }
+                        p = p.add(1);
                     }
-                    p = p.add(1);
+                }
+                krb5_free_keytab_entry_contents(context, &mut entry);
+                if found.is_some() {
+                    break;
                 }
             }
-            krb5_free_keytab_entry_contents(context, &mut entry);
-            if found.is_some() {
-                break;
-            }
+            krb5_kt_end_seq_get(context, ktid, &mut cursor);
         }
-        krb5_kt_end_seq_get(context, ktid, &mut cursor);
-    }
 
-    krb5_free_enctypes(context, permitted);
-    krb5_kt_close(context, ktid);
-    found
+        krb5_free_enctypes(context, permitted);
+        krb5_kt_close(context, ktid);
+        found
+    }
 }
 
 /// Generate an ephemeral random AES256 key (the keytab fallback).
 unsafe fn derive_ephemeral(context: krb5_context) -> Option<(krb5_enctype, Vec<u8>)> {
-    let enctype = ENCTYPE_AES256_CTS_HMAC_SHA1_96 as krb5_enctype;
-    let mut key: *mut krb5_keyblock = ptr::null_mut();
-    if krb5_init_keyblock(context, enctype, 0, &mut key) != 0 {
-        return None;
-    }
-    if krb5_c_make_random_key(context, enctype, key) != 0 {
+    unsafe {
+        let enctype = ENCTYPE_AES256_CTS_HMAC_SHA1_96 as krb5_enctype;
+        let mut key: *mut krb5_keyblock = ptr::null_mut();
+        if krb5_init_keyblock(context, enctype, 0, &mut key) != 0 {
+            return None;
+        }
+        if krb5_c_make_random_key(context, enctype, key) != 0 {
+            krb5_free_keyblock(context, key);
+            return None;
+        }
+        let kb = &*key;
+        let bytes = std::slice::from_raw_parts(kb.contents, kb.length as usize).to_vec();
+        let et = kb.enctype;
         krb5_free_keyblock(context, key);
-        return None;
+        Some((et, bytes))
     }
-    let kb = &*key;
-    let bytes = std::slice::from_raw_parts(kb.contents, kb.length as usize).to_vec();
-    let et = kb.enctype;
-    krb5_free_keyblock(context, key);
-    Some((et, bytes))
 }
 
 #[cfg(test)]

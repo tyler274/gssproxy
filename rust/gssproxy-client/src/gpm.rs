@@ -335,7 +335,7 @@ pub fn acquire_cred(
                 minor: e.errno() as u32,
                 cred: None,
                 time_rec: 0,
-            }
+            };
         }
     };
     if res.status.major_status != 0 {
@@ -348,10 +348,10 @@ pub fn acquire_cred(
         };
     }
     let mut time_rec = 0u32;
-    if let Some(c) = &res.output_cred_handle {
-        if let Some(e) = c.elements.first() {
-            time_rec = std::cmp::min(e.initiator_time_rec, e.acceptor_time_rec) as u32;
-        }
+    if let Some(c) = &res.output_cred_handle
+        && let Some(e) = c.elements.first()
+    {
+        time_rec = std::cmp::min(e.initiator_time_rec, e.acceptor_time_rec) as u32;
     }
     AcquireCred {
         major: GSS_S_COMPLETE,
@@ -603,7 +603,7 @@ pub fn accept_sec_context(
                 output_token: None,
                 actual_mech: Vec::new(),
                 delegated_cred: None,
-            }
+            };
         }
     };
 
@@ -631,7 +631,7 @@ pub fn accept_sec_context(
                 output_token: None,
                 actual_mech: Vec::new(),
                 delegated_cred: None,
-            }
+            };
         }
     };
 

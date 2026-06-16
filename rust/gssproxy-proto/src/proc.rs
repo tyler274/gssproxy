@@ -4,8 +4,8 @@
 
 use crate::gssx::*;
 use crate::xdr::{
-    decode_array, decode_optional, encode_array, encode_optional, Xdr, XdrDecoder, XdrEncoder,
-    XdrResult,
+    Xdr, XdrDecoder, XdrEncoder, XdrResult, decode_array, decode_optional, encode_array,
+    encode_optional,
 };
 
 /// GSSX procedure numbers (program 400112, version 1).

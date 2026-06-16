@@ -28,14 +28,16 @@ pub type CcResult<T> = std::result::Result<T, i32>;
 
 /// Run `f` with an initialised krb5 context, freeing it afterwards.
 unsafe fn with_context<T>(f: impl FnOnce(krb5::krb5_context) -> CcResult<T>) -> CcResult<T> {
-    let mut ctx: krb5::krb5_context = ptr::null_mut();
-    let ret = krb5::krb5_init_context(&mut ctx);
-    if ret != 0 {
-        return Err(ret as i32);
+    unsafe {
+        let mut ctx: krb5::krb5_context = ptr::null_mut();
+        let ret = krb5::krb5_init_context(&mut ctx);
+        if ret != 0 {
+            return Err(ret as i32);
+        }
+        let out = f(ctx);
+        krb5::krb5_free_context(ctx);
+        out
     }
-    let out = f(ctx);
-    krb5::krb5_free_context(ctx);
-    out
 }
 
 /// `gpp_store_remote_creds`: persist the encoded `gssx_cred` blob `ticket` into
@@ -99,11 +101,7 @@ pub fn store_remote_cred(
             if !ccache.is_null() {
                 krb5::krb5_cc_close(ctx, ccache);
             }
-            if ret == 0 {
-                Ok(())
-            } else {
-                Err(ret as i32)
-            }
+            if ret == 0 { Ok(()) } else { Err(ret as i32) }
         })
     }
 }
@@ -115,54 +113,56 @@ unsafe fn store_into_ccache(
     ccache: &mut krb5::krb5_ccache,
     store_as_default: bool,
 ) -> krb5::krb5_error_code {
-    let cc_name_ptr = krb5::krb5_cc_default_name(ctx);
-    if cc_name_ptr.is_null() {
-        return libc::ENOMEM as krb5::krb5_error_code;
-    }
-    let cc_name = CStr::from_ptr(cc_name_ptr).to_bytes().to_vec();
-
-    let is_file = cc_name.starts_with(b"FILE:") || !cc_name.contains(&b':');
-    if is_file {
-        // FILE ccaches blackhole same-principal updates: reinitialise.
-        let mut ret = krb5::krb5_cc_default(ctx, ccache);
-        if ret == 0 {
-            ret = krb5::krb5_cc_initialize(ctx, *ccache, cred.client);
+    unsafe {
+        let cc_name_ptr = krb5::krb5_cc_default_name(ctx);
+        if cc_name_ptr.is_null() {
+            return libc::ENOMEM as krb5::krb5_error_code;
         }
-        if ret == 0 {
-            ret = krb5::krb5_cc_store_cred(ctx, *ccache, cred);
+        let cc_name = CStr::from_ptr(cc_name_ptr).to_bytes().to_vec();
+
+        let is_file = cc_name.starts_with(b"FILE:") || !cc_name.contains(&b':');
+        if is_file {
+            // FILE ccaches blackhole same-principal updates: reinitialise.
+            let mut ret = krb5::krb5_cc_default(ctx, ccache);
+            if ret == 0 {
+                ret = krb5::krb5_cc_initialize(ctx, *ccache, cred.client);
+            }
+            if ret == 0 {
+                ret = krb5::krb5_cc_store_cred(ctx, *ccache, cred);
+            }
+            return ret;
         }
-        return ret;
-    }
 
-    let mut ret = krb5::krb5_cc_cache_match(ctx, cred.client, ccache);
-    if ret == krb5::KRB5_CC_NOTFOUND as krb5::krb5_error_code {
-        // New ccache in the collection; krb5_cc_new_unique takes only the type.
-        let colon = cc_name
-            .iter()
-            .position(|&b| b == b':')
-            .unwrap_or(cc_name.len());
-        let cc_type = match CString::new(&cc_name[..colon]) {
-            Ok(t) => t,
-            Err(_) => return libc::ENOMEM as krb5::krb5_error_code,
-        };
-        ret = krb5::krb5_cc_new_unique(ctx, cc_type.as_ptr(), ptr::null(), ccache);
-        if ret == 0 {
-            ret = krb5::krb5_cc_initialize(ctx, *ccache, cred.client);
+        let mut ret = krb5::krb5_cc_cache_match(ctx, cred.client, ccache);
+        if ret == krb5::KRB5_CC_NOTFOUND as krb5::krb5_error_code {
+            // New ccache in the collection; krb5_cc_new_unique takes only the type.
+            let colon = cc_name
+                .iter()
+                .position(|&b| b == b':')
+                .unwrap_or(cc_name.len());
+            let cc_type = match CString::new(&cc_name[..colon]) {
+                Ok(t) => t,
+                Err(_) => return libc::ENOMEM as krb5::krb5_error_code,
+            };
+            ret = krb5::krb5_cc_new_unique(ctx, cc_type.as_ptr(), ptr::null(), ccache);
+            if ret == 0 {
+                ret = krb5::krb5_cc_initialize(ctx, *ccache, cred.client);
+            }
         }
-    }
-    if ret != 0 {
-        return ret;
-    }
+        if ret != 0 {
+            return ret;
+        }
 
-    ret = krb5::krb5_cc_store_cred(ctx, *ccache, cred);
-    if ret != 0 {
-        return ret;
-    }
+        ret = krb5::krb5_cc_store_cred(ctx, *ccache, cred);
+        if ret != 0 {
+            return ret;
+        }
 
-    if store_as_default {
-        ret = krb5::krb5_cc_switch(ctx, *ccache);
+        if store_as_default {
+            ret = krb5::krb5_cc_switch(ctx, *ccache);
+        }
+        ret
     }
-    ret
 }
 
 /// `gppint_retrieve_remote_creds`: fetch the encoded `gssx_cred` blob stashed

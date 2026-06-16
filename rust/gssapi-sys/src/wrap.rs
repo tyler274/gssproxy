@@ -11,7 +11,7 @@ use std::ptr;
 use std::slice;
 
 use libgssapi_sys as sys;
-use sys::{gss_OID_desc, gss_buffer_desc, gss_cred_id_t, gss_ctx_id_t, gss_name_t, OM_uint32};
+use sys::{OM_uint32, gss_OID_desc, gss_buffer_desc, gss_cred_id_t, gss_ctx_id_t, gss_name_t};
 
 use crate::consts;
 use crate::krb5;
@@ -1003,45 +1003,51 @@ pub fn indicate_mechs() -> Result<Vec<Vec<u8>>> {
 /// Copy a (non-owning) `gss_OID`'s DER bytes into a `Vec`. Returns empty for a
 /// null OID.
 unsafe fn oid_to_vec(oid: sys::gss_OID) -> Vec<u8> {
-    if oid.is_null() || (*oid).elements.is_null() {
-        Vec::new()
-    } else {
-        slice::from_raw_parts((*oid).elements as *const u8, (*oid).length as usize).to_vec()
+    unsafe {
+        if oid.is_null() || (*oid).elements.is_null() {
+            Vec::new()
+        } else {
+            slice::from_raw_parts((*oid).elements as *const u8, (*oid).length as usize).to_vec()
+        }
     }
 }
 
 /// Drain a `gss_OID_set` into owned DER byte vectors and release the set.
 unsafe fn oid_set_drain(set: &mut sys::gss_OID_set) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
-    if !set.is_null() {
-        let count = (**set).count;
-        for i in 0..count {
-            out.push(oid_to_vec((**set).elements.add(i)));
+    unsafe {
+        let mut out = Vec::new();
+        if !set.is_null() {
+            let count = (**set).count;
+            for i in 0..count {
+                out.push(oid_to_vec((**set).elements.add(i)));
+            }
+            let mut minor: OM_uint32 = 0;
+            sys::gss_release_oid_set(&mut minor, set);
         }
-        let mut minor: OM_uint32 = 0;
-        sys::gss_release_oid_set(&mut minor, set);
+        out
     }
-    out
 }
 
 /// Drain a `gss_buffer_set` into owned byte vectors and release the set.
 unsafe fn buffer_set_drain(set: &mut sys::gss_buffer_set_t) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
-    if !set.is_null() {
-        let count = (**set).count;
-        for i in 0..count {
-            let elem = (**set).elements.add(i);
-            let bytes = if (*elem).value.is_null() || (*elem).length == 0 {
-                Vec::new()
-            } else {
-                slice::from_raw_parts((*elem).value as *const u8, (*elem).length).to_vec()
-            };
-            out.push(bytes);
+    unsafe {
+        let mut out = Vec::new();
+        if !set.is_null() {
+            let count = (**set).count;
+            for i in 0..count {
+                let elem = (**set).elements.add(i);
+                let bytes = if (*elem).value.is_null() || (*elem).length == 0 {
+                    Vec::new()
+                } else {
+                    slice::from_raw_parts((*elem).value as *const u8, (*elem).length).to_vec()
+                };
+                out.push(bytes);
+            }
+            let mut minor: OM_uint32 = 0;
+            sys::gss_release_buffer_set(&mut minor, set);
         }
-        let mut minor: OM_uint32 = 0;
-        sys::gss_release_buffer_set(&mut minor, set);
+        out
     }
-    out
 }
 
 /// `gss_inquire_names_for_mech`: the name-types a mechanism supports.

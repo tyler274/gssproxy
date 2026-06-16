@@ -18,7 +18,7 @@ use gssproxy_proto::proc::{
     ResIndicateMechs, ResStoreCred,
 };
 use gssproxy_proto::rpc::ReplyBody;
-use gssproxy_proto::{encode_request, Message, Xdr, XdrDecoder};
+use gssproxy_proto::{Message, Xdr, XdrDecoder, encode_request};
 
 /// DER encoding of the krb5 mechanism OID 1.2.840.113554.1.2.2.
 const KRB5_MECH_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02];

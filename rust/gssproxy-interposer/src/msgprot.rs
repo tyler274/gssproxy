@@ -7,11 +7,11 @@
 //! `gpp_remote_to_local_ctx`, then the real `gss_*` routine runs.
 
 use gssapi_sys::sys::{
-    self, gss_buffer_t, gss_ctx_id_t, gss_iov_buffer_desc, gss_qop_t, OM_uint32,
+    self, OM_uint32, gss_buffer_t, gss_ctx_id_t, gss_iov_buffer_desc, gss_qop_t,
 };
 
 use crate::error::map_error;
-use crate::handle;
+use crate::{handle, logging};
 
 /// Ensure the context has a usable local handle, importing the remote one if
 /// needed. Returns the resolved local `gss_ctx_id_t` or an error major status
@@ -20,18 +20,20 @@ unsafe fn ensure_local(
     context_handle: gss_ctx_id_t,
     minor_status: *mut OM_uint32,
 ) -> Result<gss_ctx_id_t, OM_uint32> {
-    match handle::ensure_local_ctx(context_handle) {
-        Ok(l) => Ok(l),
-        Err((maj, min)) => {
-            if min != 0 && !minor_status.is_null() {
-                *minor_status = map_error(min);
+    unsafe {
+        match handle::ensure_local_ctx(context_handle) {
+            Ok(l) => Ok(l),
+            Err((maj, min)) => {
+                if min != 0 && !minor_status.is_null() {
+                    *minor_status = map_error(min);
+                }
+                Err(maj)
             }
-            Err(maj)
         }
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_wrap(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -41,22 +43,32 @@ pub unsafe extern "C" fn gssi_wrap(
     conf_state: *mut i32,
     output_message_buffer: gss_buffer_t,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_wrap(
-        minor_status,
-        local,
-        conf_req_flag,
-        qop_req,
-        input_message_buffer,
-        conf_state,
-        output_message_buffer,
-    )
+    unsafe {
+        logging::init();
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        let maj = sys::gss_wrap(
+            minor_status,
+            local,
+            conf_req_flag,
+            qop_req,
+            input_message_buffer,
+            conf_state,
+            output_message_buffer,
+        );
+        tracing::debug!(
+            input = logging::buf_len(input_message_buffer),
+            output = logging::buf_len(output_message_buffer),
+            major = maj,
+            "wrap"
+        );
+        maj
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_wrap_size_limit(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -65,21 +77,23 @@ pub unsafe extern "C" fn gssi_wrap_size_limit(
     req_output_size: OM_uint32,
     max_input_size: *mut OM_uint32,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_wrap_size_limit(
-        minor_status,
-        local,
-        conf_req_flag,
-        qop_req,
-        req_output_size,
-        max_input_size,
-    )
+    unsafe {
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        sys::gss_wrap_size_limit(
+            minor_status,
+            local,
+            conf_req_flag,
+            qop_req,
+            req_output_size,
+            max_input_size,
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_wrap_iov(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -89,22 +103,24 @@ pub unsafe extern "C" fn gssi_wrap_iov(
     iov: *mut gss_iov_buffer_desc,
     iov_count: i32,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_wrap_iov(
-        minor_status,
-        local,
-        conf_req_flag,
-        qop_req,
-        conf_state,
-        iov,
-        iov_count,
-    )
+    unsafe {
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        sys::gss_wrap_iov(
+            minor_status,
+            local,
+            conf_req_flag,
+            qop_req,
+            conf_state,
+            iov,
+            iov_count,
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_wrap_iov_length(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -114,22 +130,24 @@ pub unsafe extern "C" fn gssi_wrap_iov_length(
     iov: *mut gss_iov_buffer_desc,
     iov_count: i32,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_wrap_iov_length(
-        minor_status,
-        local,
-        conf_req_flag,
-        qop_req,
-        conf_state,
-        iov,
-        iov_count,
-    )
+    unsafe {
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        sys::gss_wrap_iov_length(
+            minor_status,
+            local,
+            conf_req_flag,
+            qop_req,
+            conf_state,
+            iov,
+            iov_count,
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_wrap_aead(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -140,23 +158,25 @@ pub unsafe extern "C" fn gssi_wrap_aead(
     conf_state: *mut i32,
     output_message_buffer: gss_buffer_t,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_wrap_aead(
-        minor_status,
-        local,
-        conf_req_flag,
-        qop_req,
-        input_assoc_buffer,
-        input_payload_buffer,
-        conf_state,
-        output_message_buffer,
-    )
+    unsafe {
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        sys::gss_wrap_aead(
+            minor_status,
+            local,
+            conf_req_flag,
+            qop_req,
+            input_assoc_buffer,
+            input_payload_buffer,
+            conf_state,
+            output_message_buffer,
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_unwrap(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -165,21 +185,31 @@ pub unsafe extern "C" fn gssi_unwrap(
     conf_state: *mut i32,
     qop_state: *mut gss_qop_t,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_unwrap(
-        minor_status,
-        local,
-        input_message_buffer,
-        output_message_buffer,
-        conf_state,
-        qop_state,
-    )
+    unsafe {
+        logging::init();
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        let maj = sys::gss_unwrap(
+            minor_status,
+            local,
+            input_message_buffer,
+            output_message_buffer,
+            conf_state,
+            qop_state,
+        );
+        tracing::debug!(
+            input = logging::buf_len(input_message_buffer),
+            output = logging::buf_len(output_message_buffer),
+            major = maj,
+            "unwrap"
+        );
+        maj
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_unwrap_iov(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -188,14 +218,16 @@ pub unsafe extern "C" fn gssi_unwrap_iov(
     iov: *mut gss_iov_buffer_desc,
     iov_count: i32,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_unwrap_iov(minor_status, local, conf_state, qop_state, iov, iov_count)
+    unsafe {
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        sys::gss_unwrap_iov(minor_status, local, conf_state, qop_state, iov, iov_count)
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_unwrap_aead(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -205,22 +237,24 @@ pub unsafe extern "C" fn gssi_unwrap_aead(
     conf_state: *mut i32,
     qop_state: *mut gss_qop_t,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_unwrap_aead(
-        minor_status,
-        local,
-        input_message_buffer,
-        input_assoc_buffer,
-        output_payload_buffer,
-        conf_state,
-        qop_state,
-    )
+    unsafe {
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        sys::gss_unwrap_aead(
+            minor_status,
+            local,
+            input_message_buffer,
+            input_assoc_buffer,
+            output_payload_buffer,
+            conf_state,
+            qop_state,
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_get_mic(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -228,14 +262,24 @@ pub unsafe extern "C" fn gssi_get_mic(
     message_buffer: gss_buffer_t,
     message_token: gss_buffer_t,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_get_mic(minor_status, local, qop_req, message_buffer, message_token)
+    unsafe {
+        logging::init();
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        let maj = sys::gss_get_mic(minor_status, local, qop_req, message_buffer, message_token);
+        tracing::debug!(
+            message = logging::buf_len(message_buffer),
+            token = logging::buf_len(message_token),
+            major = maj,
+            "get_mic"
+        );
+        maj
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gssi_verify_mic(
     minor_status: *mut OM_uint32,
     context_handle: gss_ctx_id_t,
@@ -243,15 +287,25 @@ pub unsafe extern "C" fn gssi_verify_mic(
     message_token: gss_buffer_t,
     qop_state: *mut gss_qop_t,
 ) -> OM_uint32 {
-    let local = match ensure_local(context_handle, minor_status) {
-        Ok(l) => l,
-        Err(maj) => return maj,
-    };
-    sys::gss_verify_mic(
-        minor_status,
-        local,
-        message_buffer,
-        message_token,
-        qop_state,
-    )
+    unsafe {
+        logging::init();
+        let local = match ensure_local(context_handle, minor_status) {
+            Ok(l) => l,
+            Err(maj) => return maj,
+        };
+        let maj = sys::gss_verify_mic(
+            minor_status,
+            local,
+            message_buffer,
+            message_token,
+            qop_state,
+        );
+        tracing::debug!(
+            message = logging::buf_len(message_buffer),
+            token = logging::buf_len(message_token),
+            major = maj,
+            "verify_mic"
+        );
+        maj
+    }
 }

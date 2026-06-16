@@ -17,6 +17,9 @@ fn main() {
         .expect("pkg-config could not find krb5");
 
     let mut builder = bindgen::Builder::default()
+        // Match the crate edition (2024) so the generated FFI is emitted as
+        // `unsafe extern "C"` blocks, as required since edition 2024.
+        .rust_edition(bindgen::RustEdition::Edition2024)
         .header("krb5_wrapper.h")
         .allowlist_function("krb5_init_context")
         .allowlist_function("krb5_free_context")

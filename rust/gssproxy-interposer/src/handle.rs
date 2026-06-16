@@ -11,8 +11,8 @@ use std::os::raw::c_void;
 use std::ptr;
 
 use gssapi_sys::sys::{
-    self, gss_OID, gss_OID_desc, gss_buffer_desc, gss_cred_id_t, gss_ctx_id_t, gss_name_t,
-    OM_uint32,
+    self, OM_uint32, gss_OID, gss_OID_desc, gss_buffer_desc, gss_cred_id_t, gss_ctx_id_t,
+    gss_name_t,
 };
 use gssapi_sys::{ccache, consts};
 use gssproxy_client::gpm;
@@ -56,7 +56,7 @@ impl OwnedOid {
     /// # Safety
     /// `oid` must be null or a valid `gss_OID`.
     pub unsafe fn from_oid(oid: gss_OID) -> Option<Box<OwnedOid>> {
-        convert::oid_bytes(oid).map(|b| OwnedOid::new(b.to_vec()))
+        unsafe { convert::oid_bytes(oid).map(|b| OwnedOid::new(b.to_vec())) }
     }
 
     pub fn as_ptr(&self) -> gss_OID {
@@ -98,13 +98,13 @@ impl CredHandle {
     /// # Safety
     /// `p` must be null or a pointer previously produced by [`into_raw`].
     pub unsafe fn as_mut<'a>(p: gss_cred_id_t) -> Option<&'a mut CredHandle> {
-        (p as *mut CredHandle).as_mut()
+        unsafe { (p as *mut CredHandle).as_mut() }
     }
 
     /// # Safety
     /// `p` must be a pointer previously produced by [`into_raw`] and not freed.
     pub unsafe fn from_raw(p: gss_cred_id_t) -> Box<CredHandle> {
-        Box::from_raw(p as *mut CredHandle)
+        unsafe { Box::from_raw(p as *mut CredHandle) }
     }
 }
 
@@ -144,13 +144,13 @@ impl CtxHandle {
     /// # Safety
     /// `p` must be null or a pointer previously produced by [`into_raw`].
     pub unsafe fn as_mut<'a>(p: gss_ctx_id_t) -> Option<&'a mut CtxHandle> {
-        (p as *mut CtxHandle).as_mut()
+        unsafe { (p as *mut CtxHandle).as_mut() }
     }
 
     /// # Safety
     /// `p` must be a pointer previously produced by [`into_raw`] and not freed.
     pub unsafe fn from_raw(p: gss_ctx_id_t) -> Box<CtxHandle> {
-        Box::from_raw(p as *mut CtxHandle)
+        unsafe { Box::from_raw(p as *mut CtxHandle) }
     }
 }
 
@@ -192,13 +192,13 @@ impl NameHandle {
     /// # Safety
     /// `p` must be null or a pointer previously produced by [`into_raw`].
     pub unsafe fn as_mut<'a>(p: gss_name_t) -> Option<&'a mut NameHandle> {
-        (p as *mut NameHandle).as_mut()
+        unsafe { (p as *mut NameHandle).as_mut() }
     }
 
     /// # Safety
     /// `p` must be a pointer previously produced by [`into_raw`] and not freed.
     pub unsafe fn from_raw(p: gss_name_t) -> Box<NameHandle> {
-        Box::from_raw(p as *mut NameHandle)
+        unsafe { Box::from_raw(p as *mut NameHandle) }
     }
 
     pub fn mech_ptr(&self) -> gss_OID {
@@ -228,13 +228,15 @@ impl Drop for NameHandle {
 /// # Safety
 /// `mech_type` must be null or a valid `gss_OID`.
 pub unsafe fn wrap_sec_ctx_token(mech_type: gss_OID, token: &[u8]) -> Option<Vec<u8>> {
-    let sp = special::special_mech(mech_type as *const gss_OID_desc);
-    let sp_bytes = convert::oid_bytes(sp)?;
-    let mut out = Vec::with_capacity(4 + sp_bytes.len() + token.len());
-    out.extend_from_slice(&(sp_bytes.len() as u32).to_be_bytes());
-    out.extend_from_slice(sp_bytes);
-    out.extend_from_slice(token);
-    Some(out)
+    unsafe {
+        let sp = special::special_mech(mech_type as *const gss_OID_desc);
+        let sp_bytes = convert::oid_bytes(sp)?;
+        let mut out = Vec::with_capacity(4 + sp_bytes.len() + token.len());
+        out.extend_from_slice(&(sp_bytes.len() as u32).to_be_bytes());
+        out.extend_from_slice(sp_bytes);
+        out.extend_from_slice(token);
+        Some(out)
+    }
 }
 
 /// `gpp_remote_to_local_ctx`: import the remote context's exported token into a
@@ -246,30 +248,32 @@ pub unsafe fn remote_to_local_ctx(
     remote: &mut Option<GssxCtx>,
     local: &mut gss_ctx_id_t,
 ) -> Status {
-    let token = match remote {
-        Some(c) => c.exported_context_token.as_slice().to_vec(),
-        None => return (consts::GSS_S_FAILURE, 0),
-    };
-    if token.len() <= 4 {
-        return (consts::GSS_S_FAILURE, 0);
-    }
-    let mech_len = u32::from_be_bytes([token[0], token[1], token[2], token[3]]) as usize;
-    let hlen = 4 + mech_len;
-    if token.len() <= hlen {
-        return (consts::GSS_S_FAILURE, 0);
-    }
-    let mech_oid = convert::TmpOid::new(&token[4..hlen]);
-    let inner = &token[hlen..];
+    unsafe {
+        let token = match remote {
+            Some(c) => c.exported_context_token.as_slice().to_vec(),
+            None => return (consts::GSS_S_FAILURE, 0),
+        };
+        if token.len() <= 4 {
+            return (consts::GSS_S_FAILURE, 0);
+        }
+        let mech_len = u32::from_be_bytes([token[0], token[1], token[2], token[3]]) as usize;
+        let hlen = 4 + mech_len;
+        if token.len() <= hlen {
+            return (consts::GSS_S_FAILURE, 0);
+        }
+        let mech_oid = convert::TmpOid::new(&token[4..hlen]);
+        let inner = &token[hlen..];
 
-    let wrapped = match wrap_sec_ctx_token(mech_oid.as_ptr(), inner) {
-        Some(w) => w,
-        None => return (consts::GSS_S_FAILURE, 0),
-    };
-    let wrapbuf = convert::TmpBuf::new(&wrapped);
-    let mut min: OM_uint32 = 0;
-    let maj = sys::gss_import_sec_context(&mut min, wrapbuf.as_ptr(), local);
-    *remote = None;
-    (maj, min)
+        let wrapped = match wrap_sec_ctx_token(mech_oid.as_ptr(), inner) {
+            Some(w) => w,
+            None => return (consts::GSS_S_FAILURE, 0),
+        };
+        let wrapbuf = convert::TmpBuf::new(&wrapped);
+        let mut min: OM_uint32 = 0;
+        let maj = sys::gss_import_sec_context(&mut min, wrapbuf.as_ptr(), local);
+        *remote = None;
+        (maj, min)
+    }
 }
 
 /// Resolve a context payload to a usable local `gss_ctx_id_t`, importing the
@@ -280,20 +284,22 @@ pub unsafe fn remote_to_local_ctx(
 /// # Safety
 /// `context_handle` must be null or a pointer produced by [`CtxHandle::into_raw`].
 pub unsafe fn ensure_local_ctx(context_handle: gss_ctx_id_t) -> Result<gss_ctx_id_t, Status> {
-    if context_handle.is_null() {
-        return Err((consts::GSS_S_CALL_INACCESSIBLE_READ, 0));
-    }
-    let ctx = match CtxHandle::as_mut(context_handle) {
-        Some(c) => c,
-        None => return Err((consts::GSS_S_CALL_INACCESSIBLE_READ, 0)),
-    };
-    if ctx.remote.is_some() && ctx.local.is_null() {
-        let (maj, min) = remote_to_local_ctx(&mut ctx.remote, &mut ctx.local);
-        if maj != COMPLETE {
-            return Err((maj, min));
+    unsafe {
+        if context_handle.is_null() {
+            return Err((consts::GSS_S_CALL_INACCESSIBLE_READ, 0));
         }
+        let ctx = match CtxHandle::as_mut(context_handle) {
+            Some(c) => c,
+            None => return Err((consts::GSS_S_CALL_INACCESSIBLE_READ, 0)),
+        };
+        if ctx.remote.is_some() && ctx.local.is_null() {
+            let (maj, min) = remote_to_local_ctx(&mut ctx.remote, &mut ctx.local);
+            if maj != COMPLETE {
+                return Err((maj, min));
+            }
+        }
+        Ok(ctx.local)
     }
-    Ok(ctx.local)
 }
 
 /// `gpp_name_to_local`: turn a remote `gssx_name` into a real local
@@ -303,30 +309,32 @@ pub unsafe fn ensure_local_ctx(context_handle: gss_ctx_id_t) -> Result<gss_ctx_i
 /// # Safety
 /// `mech_type` must be null or a valid `gss_OID`.
 pub unsafe fn name_to_local(remote: &mut GssxName, mech_type: gss_OID) -> (u32, u32, gss_name_t) {
-    let (maj, min, disp, ntype) = gpm::display_name(remote);
-    if maj != COMPLETE {
-        return (maj, min, ptr::null_mut());
-    }
-    let ntype_oid = match convert::name_type_static(&ntype) {
-        Some(o) => o,
-        None => return (consts::GSS_S_FAILURE, libc::ENOENT as u32, ptr::null_mut()),
-    };
+    unsafe {
+        let (maj, min, disp, ntype) = gpm::display_name(remote);
+        if maj != COMPLETE {
+            return (maj, min, ptr::null_mut());
+        }
+        let ntype_oid = match convert::name_type_static(&ntype) {
+            Some(o) => o,
+            None => return (consts::GSS_S_FAILURE, libc::ENOENT as u32, ptr::null_mut()),
+        };
 
-    let inbuf = convert::TmpBuf::new(&disp);
-    let mut tmpname: gss_name_t = ptr::null_mut();
-    let mut min2: OM_uint32 = 0;
-    let maj2 = sys::gss_import_name(&mut min2, inbuf.as_ptr(), ntype_oid, &mut tmpname);
-    if maj2 != COMPLETE {
-        return (maj2, min2, ptr::null_mut());
-    }
+        let inbuf = convert::TmpBuf::new(&disp);
+        let mut tmpname: gss_name_t = ptr::null_mut();
+        let mut min2: OM_uint32 = 0;
+        let maj2 = sys::gss_import_name(&mut min2, inbuf.as_ptr(), ntype_oid, &mut tmpname);
+        if maj2 != COMPLETE {
+            return (maj2, min2, ptr::null_mut());
+        }
 
-    let mut maj3 = COMPLETE;
-    let mut min3: OM_uint32 = 0;
-    if !mech_type.is_null() {
-        let sp = special::special_mech(mech_type as *const gss_OID_desc);
-        maj3 = sys::gss_canonicalize_name(&mut min3, tmpname, sp, ptr::null_mut());
+        let mut maj3 = COMPLETE;
+        let mut min3: OM_uint32 = 0;
+        if !mech_type.is_null() {
+            let sp = special::special_mech(mech_type as *const gss_OID_desc);
+            maj3 = sys::gss_canonicalize_name(&mut min3, tmpname, sp, ptr::null_mut());
+        }
+        (maj3, min3, tmpname)
     }
-    (maj3, min3, tmpname)
 }
 
 /// `gpp_local_to_name`: turn a real local `gss_name_t` into a `gssx_name`.
@@ -334,23 +342,25 @@ pub unsafe fn name_to_local(remote: &mut GssxName, mech_type: gss_OID) -> (u32, 
 /// # Safety
 /// `local` must be a valid `gss_name_t`.
 pub unsafe fn local_to_name(local: gss_name_t) -> (u32, u32, Option<GssxName>) {
-    let mut buf = gss_buffer_desc {
-        length: 0,
-        value: ptr::null_mut(),
-    };
-    let mut ntype: gss_OID = ptr::null_mut();
-    let mut min: OM_uint32 = 0;
-    let maj = sys::gss_display_name(&mut min, local, &mut buf, &mut ntype);
-    if maj != COMPLETE {
-        return (maj, min, None);
+    unsafe {
+        let mut buf = gss_buffer_desc {
+            length: 0,
+            value: ptr::null_mut(),
+        };
+        let mut ntype: gss_OID = ptr::null_mut();
+        let mut min: OM_uint32 = 0;
+        let maj = sys::gss_display_name(&mut min, local, &mut buf, &mut ntype);
+        if maj != COMPLETE {
+            return (maj, min, None);
+        }
+        let disp = convert::read_buffer(&mut buf as *mut _).to_vec();
+        let nt = convert::oid_bytes(ntype)
+            .map(|b| b.to_vec())
+            .unwrap_or_default();
+        convert::release_buffer(&mut buf as *mut _);
+        let name = gpm::import_name(&disp, &nt);
+        (COMPLETE, 0, Some(name))
     }
-    let disp = convert::read_buffer(&mut buf as *mut _).to_vec();
-    let nt = convert::oid_bytes(ntype)
-        .map(|b| b.to_vec())
-        .unwrap_or_default();
-    convert::release_buffer(&mut buf as *mut _);
-    let name = gpm::import_name(&disp, &nt);
-    (COMPLETE, 0, Some(name))
 }
 
 /// `gpp_creds_are_equal`: compare two `gssx_cred`s by desired name, element
@@ -407,31 +417,33 @@ unsafe fn get_local_def_creds(
     cred_usage: i32,
     out_local: &mut gss_cred_id_t,
 ) -> Status {
-    let mut interposed = crate::gss_mech_interposer(oids::interposer() as gss_OID);
-    if interposed.is_null() {
-        return (consts::GSS_S_FAILURE, 0);
+    unsafe {
+        let mut interposed = crate::gss_mech_interposer(oids::interposer() as gss_OID);
+        if interposed.is_null() {
+            return (consts::GSS_S_FAILURE, 0);
+        }
+        let mut special = special::special_available_mechs(interposed);
+        let mut min: OM_uint32 = 0;
+        if special.is_null() {
+            sys::gss_release_oid_set(&mut min, &mut interposed);
+            return (consts::GSS_S_FAILURE, 0);
+        }
+        let mut min2: OM_uint32 = 0;
+        let maj = sys::gss_acquire_cred(
+            &mut min2,
+            name_local,
+            0,
+            special,
+            cred_usage,
+            out_local,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        );
+        let mut m: OM_uint32 = 0;
+        sys::gss_release_oid_set(&mut m, &mut special);
+        sys::gss_release_oid_set(&mut m, &mut interposed);
+        (maj, min2)
     }
-    let mut special = special::special_available_mechs(interposed);
-    let mut min: OM_uint32 = 0;
-    if special.is_null() {
-        sys::gss_release_oid_set(&mut min, &mut interposed);
-        return (consts::GSS_S_FAILURE, 0);
-    }
-    let mut min2: OM_uint32 = 0;
-    let maj = sys::gss_acquire_cred(
-        &mut min2,
-        name_local,
-        0,
-        special,
-        cred_usage,
-        out_local,
-        ptr::null_mut(),
-        ptr::null_mut(),
-    );
-    let mut m: OM_uint32 = 0;
-    sys::gss_release_oid_set(&mut m, &mut special);
-    sys::gss_release_oid_set(&mut m, &mut interposed);
-    (maj, min2)
 }
 
 /// `gppint_get_def_creds`: obtain default creds honouring the behavior matrix,
@@ -445,61 +457,62 @@ pub unsafe fn get_def_creds(
     cred_usage: i32,
     slot: &mut Option<Box<CredHandle>>,
 ) -> Status {
-    if slot.is_none() {
-        *slot = Some(CredHandle::new(true, None));
-    }
-    let name_local = name.as_ref().map(|n| n.local).unwrap_or(ptr::null_mut());
-    let name_remote = name.and_then(|n| n.remote.as_ref());
-
-    let cred = slot.as_mut().unwrap();
-    let mut tmaj = COMPLETE;
-    let mut tmin = 0u32;
-    let mut maj = consts::GSS_S_FAILURE;
-    let mut min = 0u32;
-
-    if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
-        let (m, mi) = get_local_def_creds(name_local, cred_usage, &mut cred.local);
-        maj = m;
-        min = mi;
-        if maj == COMPLETE || behavior == Behavior::LocalOnly {
-            return finish_def_creds(maj, min, tmaj, tmin);
+    unsafe {
+        if slot.is_none() {
+            *slot = Some(CredHandle::new(true, None));
         }
-        tmaj = maj;
-        tmin = min;
-    }
+        let name_local = name.as_ref().map(|n| n.local).unwrap_or(ptr::null_mut());
+        let name_remote = name.and_then(|n| n.remote.as_ref());
 
-    if behavior != Behavior::LocalOnly {
-        let (rmaj, _, remote) = retrieve_remote_creds(None, name_remote);
-        let premote = if rmaj == COMPLETE { remote } else { None };
+        let cred = slot.as_mut().unwrap();
+        let mut tmaj = COMPLETE;
+        let mut tmin = 0u32;
+        let mut maj = consts::GSS_S_FAILURE;
+        let mut min = 0u32;
 
-        let acq = gpm::acquire_cred(premote.as_ref(), None, 0, &[], cred_usage, false);
-        maj = acq.major;
-        min = acq.minor;
-        if maj == COMPLETE {
-            cred.remote = acq.cred;
-            if let Some(p) = &premote {
-                if !creds_are_equal(Some(p), cred.remote.as_ref()) {
-                    if let Some(rc) = &cred.remote {
-                        let (sm, smi) = store_remote_creds(cred.default_creds, &cred.store, rc);
-                        maj = sm;
-                        min = smi;
-                    }
-                }
-            }
-        }
-
-        if maj == COMPLETE {
-            return finish_def_creds(maj, min, tmaj, tmin);
-        }
-
-        if behavior == Behavior::RemoteFirst {
+        if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
             let (m, mi) = get_local_def_creds(name_local, cred_usage, &mut cred.local);
             maj = m;
             min = mi;
+            if maj == COMPLETE || behavior == Behavior::LocalOnly {
+                return finish_def_creds(maj, min, tmaj, tmin);
+            }
+            tmaj = maj;
+            tmin = min;
         }
-    }
 
-    finish_def_creds(maj, min, tmaj, tmin)
+        if behavior != Behavior::LocalOnly {
+            let (rmaj, _, remote) = retrieve_remote_creds(None, name_remote);
+            let premote = if rmaj == COMPLETE { remote } else { None };
+
+            let acq = gpm::acquire_cred(premote.as_ref(), None, 0, &[], cred_usage, false);
+            maj = acq.major;
+            min = acq.minor;
+            if maj == COMPLETE {
+                cred.remote = acq.cred;
+                if let Some(p) = &premote
+                    && !creds_are_equal(Some(p), cred.remote.as_ref())
+                    && let Some(rc) = &cred.remote
+                {
+                    let (sm, smi) = store_remote_creds(cred.default_creds, &cred.store, rc);
+                    maj = sm;
+                    min = smi;
+                }
+            }
+
+            if maj == COMPLETE {
+                return finish_def_creds(maj, min, tmaj, tmin);
+            }
+
+            if behavior == Behavior::RemoteFirst {
+                let (m, mi) = get_local_def_creds(name_local, cred_usage, &mut cred.local);
+                maj = m;
+                min = mi;
+            }
+        }
+
+        finish_def_creds(maj, min, tmaj, tmin)
+    }
 }
 
 fn finish_def_creds(maj: u32, min: u32, tmaj: u32, tmin: u32) -> Status {

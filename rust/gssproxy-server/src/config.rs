@@ -127,23 +127,24 @@ impl Config {
 
         // Global [gssproxy] section.
         if let Some(g) = ini.section(Some("gssproxy")) {
-            if let Some(v) = g.get("debug") {
-                if gp_boolean_is_true(v) && cfg.debug_level == 0 {
-                    cfg.debug_level = 1;
-                }
+            if let Some(v) = g.get("debug")
+                && gp_boolean_is_true(v)
+                && cfg.debug_level == 0
+            {
+                cfg.debug_level = 1;
             }
-            if let Some(v) = g.get("debug_level") {
-                if let Ok(n) = v.trim().parse::<i32>() {
-                    cfg.debug_level = n;
-                }
+            if let Some(v) = g.get("debug_level")
+                && let Ok(n) = v.trim().parse::<i32>()
+            {
+                cfg.debug_level = n;
             }
             if let Some(v) = g.get("run_as_user") {
                 cfg.proxy_user = Some(v.to_string());
             }
-            if let Some(v) = g.get("worker threads") {
-                if let Ok(n) = v.trim().parse::<i32>() {
-                    cfg.num_workers = n;
-                }
+            if let Some(v) = g.get("worker threads")
+                && let Ok(n) = v.trim().parse::<i32>()
+            {
+                cfg.num_workers = n;
             }
         }
 
@@ -152,10 +153,10 @@ impl Config {
             let Some(name) = sec.strip_prefix("service/") else {
                 continue;
             };
-            if let Some(props) = ini.section(Some(sec)) {
-                if let Some(svc) = parse_service(name, props)? {
-                    cfg.services.push(svc);
-                }
+            if let Some(props) = ini.section(Some(sec))
+                && let Some(svc) = parse_service(name, props)?
+            {
+                cfg.services.push(svc);
             }
         }
 
@@ -179,10 +180,10 @@ impl Config {
             if !svc.any_uid && svc.euid != uid {
                 return false;
             }
-            if let Some(p) = &svc.program {
-                if program != Some(p.as_str()) {
-                    return false;
-                }
+            if let Some(p) = &svc.program
+                && program != Some(p.as_str())
+            {
+                return false;
             }
             match &svc.socket {
                 Some(s) => socket == s,
@@ -222,7 +223,7 @@ fn parse_service(name: &str, props: &ini::Properties) -> Result<Option<Service>>
         None => {
             return Err(ConfigError::Invalid(format!(
                 "Option 'euid' is missing from [service/{name}]."
-            )))
+            )));
         }
         Some(v) => {
             let v = v.trim();
@@ -275,7 +276,7 @@ fn parse_service(name: &str, props: &ini::Properties) -> Result<Option<Service>>
             _ => {
                 return Err(ConfigError::Invalid(format!(
                     "Invalid value '{v}' for cred_usage in [service/{name}]."
-                )))
+                )));
             }
         };
     }
@@ -291,12 +292,11 @@ fn parse_service(name: &str, props: &ini::Properties) -> Result<Option<Service>>
         svc.program = Some(v.to_string());
     }
 
-    if let Some(v) = props.get("min_lifetime") {
-        if let Ok(n) = v.trim().parse::<i64>() {
-            if n >= 0 {
-                svc.min_lifetime = n as u32;
-            }
-        }
+    if let Some(v) = props.get("min_lifetime")
+        && let Ok(n) = v.trim().parse::<i64>()
+        && n >= 0
+    {
+        svc.min_lifetime = n as u32;
     }
 
     Ok(Some(svc))
@@ -739,11 +739,10 @@ mod prop_tests {
                 if !svc.any_uid && svc.euid != uid {
                     return false;
                 }
-                if let Some(p) = &svc.program {
-                    if program.as_deref() != Some(p.as_str()) {
+                if let Some(p) = &svc.program
+                    && program.as_deref() != Some(p.as_str()) {
                         return false;
                     }
-                }
                 match &svc.socket {
                     Some(s) => socket == *s,
                     None => socket == cfg.socket_name,

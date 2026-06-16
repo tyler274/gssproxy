@@ -57,37 +57,39 @@ unsafe fn read_sealed_blob_inner(
     ctx: krb5::krb5_context,
     ccache_name: &str,
 ) -> Result<Vec<u8>, String> {
-    let cc_cname = CString::new(ccache_name).map_err(|_| "invalid ccache name".to_string())?;
-    let srv_cname = CString::new(GPKRB_SRV_NAME).unwrap();
+    unsafe {
+        let cc_cname = CString::new(ccache_name).map_err(|_| "invalid ccache name".to_string())?;
+        let srv_cname = CString::new(GPKRB_SRV_NAME).unwrap();
 
-    let mut ccache: krb5::krb5_ccache = ptr::null_mut();
-    if krb5::krb5_cc_resolve(ctx, cc_cname.as_ptr(), &mut ccache) != 0 {
-        return Err(format!("cannot resolve ccache {ccache_name}"));
+        let mut ccache: krb5::krb5_ccache = ptr::null_mut();
+        if krb5::krb5_cc_resolve(ctx, cc_cname.as_ptr(), &mut ccache) != 0 {
+            return Err(format!("cannot resolve ccache {ccache_name}"));
+        }
+
+        let mut mcreds: krb5::krb5_creds = std::mem::zeroed();
+        let mut creds: krb5::krb5_creds = std::mem::zeroed();
+
+        let result: Result<Vec<u8>, String> = 'work: {
+            if krb5::krb5_cc_get_principal(ctx, ccache, &mut mcreds.client) != 0 {
+                break 'work Err("cannot read ccache principal".into());
+            }
+            if krb5::krb5_parse_name(ctx, srv_cname.as_ptr(), &mut mcreds.server) != 0 {
+                break 'work Err("cannot parse gssproxy server principal".into());
+            }
+            if krb5::krb5_cc_retrieve_cred(ctx, ccache, 0, &mut mcreds, &mut creds) != 0 {
+                break 'work Err("no gssproxy credential in ccache".into());
+            }
+            let t = &creds.ticket;
+            if t.data.is_null() || t.length == 0 {
+                break 'work Err("empty gssproxy credential ticket".into());
+            }
+            Ok(std::slice::from_raw_parts(t.data as *const u8, t.length as usize).to_vec())
+        };
+
+        krb5::krb5_free_cred_contents(ctx, &mut creds);
+        krb5::krb5_free_cred_contents(ctx, &mut mcreds);
+        krb5::krb5_cc_close(ctx, ccache);
+
+        result
     }
-
-    let mut mcreds: krb5::krb5_creds = std::mem::zeroed();
-    let mut creds: krb5::krb5_creds = std::mem::zeroed();
-
-    let result: Result<Vec<u8>, String> = 'work: {
-        if krb5::krb5_cc_get_principal(ctx, ccache, &mut mcreds.client) != 0 {
-            break 'work Err("cannot read ccache principal".into());
-        }
-        if krb5::krb5_parse_name(ctx, srv_cname.as_ptr(), &mut mcreds.server) != 0 {
-            break 'work Err("cannot parse gssproxy server principal".into());
-        }
-        if krb5::krb5_cc_retrieve_cred(ctx, ccache, 0, &mut mcreds, &mut creds) != 0 {
-            break 'work Err("no gssproxy credential in ccache".into());
-        }
-        let t = &creds.ticket;
-        if t.data.is_null() || t.length == 0 {
-            break 'work Err("empty gssproxy credential ticket".into());
-        }
-        Ok(std::slice::from_raw_parts(t.data as *const u8, t.length as usize).to_vec())
-    };
-
-    krb5::krb5_free_cred_contents(ctx, &mut creds);
-    krb5::krb5_free_cred_contents(ctx, &mut mcreds);
-    krb5::krb5_cc_close(ctx, ccache);
-
-    result
 }

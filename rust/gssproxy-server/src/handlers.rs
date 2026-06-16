@@ -9,6 +9,7 @@ use gssapi_sys::consts;
 use gssapi_sys::wrap::{self, Cred, GssError};
 use gssproxy_proto::gssx::*;
 use gssproxy_proto::proc::*;
+use gssproxy_proto::redact;
 
 use crate::call::CallContext;
 use crate::config::Service;
@@ -222,6 +223,12 @@ pub fn store_cred(_ctx: &CallContext, _arg: ArgStoreCred) -> ResStoreCred {
 /// paths are handled by [`creds::add_krb5_creds`].
 pub fn acquire_cred(ctx: &CallContext, arg: ArgAcquireCred) -> ResAcquireCred {
     let (major, minor, output, mech) = acquire_cred_inner(ctx, &arg);
+    tracing::debug!(
+        major,
+        minor,
+        cred_acquired = output.is_some(),
+        "acquire_cred"
+    );
     ResAcquireCred {
         status: conv::status_to_gssx(major, minor, mech.as_deref()),
         output_cred_handle: output,
@@ -348,6 +355,14 @@ pub fn init_sec_context(ctx: &CallContext, arg: ArgInitSecContext) -> ResInitSec
         }
         Err(e) => res.status = conv::status_to_gssx(e.major, e.minor, status_mech),
     }
+    // Token contents are secret; only their lengths are recorded.
+    tracing::debug!(
+        input_token = %redact::opt_len(arg.input_token.as_ref().map(|b| b.as_slice())),
+        output_token = %redact::opt_len(res.output_token.as_ref().map(|b| b.as_slice())),
+        major = res.status.major_status,
+        minor = res.status.minor_status,
+        "init_sec_context"
+    );
     res
 }
 
@@ -463,6 +478,14 @@ pub fn accept_sec_context(ctx: &CallContext, arg: ArgAcceptSecContext) -> ResAcc
         }
         Err(e) => res.status = conv::status_to_gssx(e.major, e.minor, None),
     }
+    tracing::debug!(
+        input_token = %redact::len(arg.input_token.as_slice()),
+        output_token = %redact::opt_len(res.output_token.as_ref().map(|b| b.as_slice())),
+        delegated = res.delegated_cred_handle.is_some(),
+        major = res.status.major_status,
+        minor = res.status.minor_status,
+        "accept_sec_context"
+    );
     res
 }
 
@@ -570,6 +593,12 @@ pub fn get_mic(_ctx: &CallContext, arg: ArgGetMic) -> ResGetMic {
         }
         Err(e) => res.status = status_err(&e),
     }
+    tracing::debug!(
+        message = %redact::len(arg.message_buffer.as_slice()),
+        token = %redact::len(res.token_buffer.as_slice()),
+        major = res.status.major_status,
+        "get_mic"
+    );
     res
 }
 
@@ -591,6 +620,12 @@ pub fn verify_mic(_ctx: &CallContext, arg: ArgVerifyMic) -> ResVerifyMic {
         }
         Err(e) => res.status = status_err(&e),
     }
+    tracing::debug!(
+        message = %redact::len(arg.message_buffer.as_slice()),
+        token = %redact::len(arg.token_buffer.as_slice()),
+        major = res.status.major_status,
+        "verify_mic"
+    );
     res
 }
 
@@ -620,6 +655,13 @@ pub fn wrap_msg(_ctx: &CallContext, arg: ArgWrap) -> ResWrap {
         }
         Err(e) => res.status = status_err(&e),
     }
+    tracing::debug!(
+        message = %redact::opt_len(arg.message_buffer.first().map(|b| b.as_slice())),
+        token = %redact::opt_len(res.token_buffer.first().map(|b| b.as_slice())),
+        conf = ?res.conf_state,
+        major = res.status.major_status,
+        "wrap"
+    );
     res
 }
 
@@ -649,6 +691,13 @@ pub fn unwrap_msg(_ctx: &CallContext, arg: ArgUnwrap) -> ResUnwrap {
         }
         Err(e) => res.status = status_err(&e),
     }
+    tracing::debug!(
+        token = %redact::opt_len(arg.token_buffer.first().map(|b| b.as_slice())),
+        message = %redact::opt_len(res.message_buffer.first().map(|b| b.as_slice())),
+        conf = ?res.conf_state,
+        major = res.status.major_status,
+        "unwrap"
+    );
     res
 }
 

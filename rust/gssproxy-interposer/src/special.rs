@@ -15,7 +15,7 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Mutex;
 
-use gssapi_sys::sys::{gss_OID, gss_OID_desc, OM_uint32};
+use gssapi_sys::sys::{OM_uint32, gss_OID, gss_OID_desc};
 
 use crate::oids;
 
@@ -50,13 +50,15 @@ fn leak_oid(bytes: &[u8]) -> *const gss_OID_desc {
 /// # Safety
 /// `mech` must satisfy the contract of [`oids::oid_bytes`].
 pub unsafe fn is_special_oid(mech: *const gss_OID_desc) -> bool {
-    let prefix = match oids::oid_bytes(oids::interposer()) {
-        Some(p) => p,
-        None => return false,
-    };
-    match oids::oid_bytes(mech) {
-        Some(b) => b.len() >= prefix.len() && &b[..prefix.len()] == prefix,
-        None => false,
+    unsafe {
+        let prefix = match oids::oid_bytes(oids::interposer()) {
+            Some(p) => p,
+            None => return false,
+        };
+        match oids::oid_bytes(mech) {
+            Some(b) => b.len() >= prefix.len() && &b[..prefix.len()] == prefix,
+            None => false,
+        }
     }
 }
 
@@ -66,15 +68,17 @@ pub unsafe fn is_special_oid(mech: *const gss_OID_desc) -> bool {
 /// # Safety
 /// Both pointers must satisfy the contract of [`oids::oid_bytes`].
 unsafe fn special_equal(s: *const gss_OID_desc, n: *const gss_OID_desc) -> bool {
-    let base = match oids::oid_bytes(oids::interposer()) {
-        Some(p) => p.len(),
-        None => return false,
-    };
-    let (sb, nb) = match (oids::oid_bytes(s), oids::oid_bytes(n)) {
-        (Some(sb), Some(nb)) => (sb, nb),
-        _ => return false,
-    };
-    sb.len() >= base && sb.len() - base == nb.len() && &sb[base..] == nb
+    unsafe {
+        let base = match oids::oid_bytes(oids::interposer()) {
+            Some(p) => p.len(),
+            None => return false,
+        };
+        let (sb, nb) = match (oids::oid_bytes(s), oids::oid_bytes(n)) {
+            (Some(sb), Some(nb)) => (sb, nb),
+            _ => return false,
+        };
+        sb.len() >= base && sb.len() - base == nb.len() && &sb[base..] == nb
+    }
 }
 
 /// `gpp_new_special_mech`: build a new special OID for the regular mech bytes
@@ -109,28 +113,30 @@ fn register_locked(reg: &mut Vec<SpecialEntry>, nb: &[u8]) -> *const gss_OID_des
 /// # Safety
 /// `mech_type` must be null or satisfy the contract of [`oids::oid_bytes`].
 pub unsafe fn special_mech(mech_type: *const gss_OID_desc) -> gss_OID {
-    if is_special_oid(mech_type) {
-        return mech_type as gss_OID;
-    }
-
-    let mut reg = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-
-    if mech_type.is_null() {
-        return reg
-            .first()
-            .map(|e| e.special as gss_OID)
-            .unwrap_or(ptr::null_mut());
-    }
-
-    for e in reg.iter() {
-        if special_equal(e.special, mech_type) {
-            return e.special as gss_OID;
+    unsafe {
+        if is_special_oid(mech_type) {
+            return mech_type as gss_OID;
         }
-    }
 
-    match oids::oid_bytes(mech_type) {
-        Some(nb) => register_locked(&mut reg, nb) as gss_OID,
-        None => ptr::null_mut(),
+        let mut reg = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+
+        if mech_type.is_null() {
+            return reg
+                .first()
+                .map(|e| e.special as gss_OID)
+                .unwrap_or(ptr::null_mut());
+        }
+
+        for e in reg.iter() {
+            if special_equal(e.special, mech_type) {
+                return e.special as gss_OID;
+            }
+        }
+
+        match oids::oid_bytes(mech_type) {
+            Some(nb) => register_locked(&mut reg, nb) as gss_OID,
+            None => ptr::null_mut(),
+        }
     }
 }
 
@@ -140,16 +146,18 @@ pub unsafe fn special_mech(mech_type: *const gss_OID_desc) -> gss_OID {
 /// # Safety
 /// `mech_type` must be null or satisfy the contract of [`oids::oid_bytes`].
 pub unsafe fn unspecial_mech(mech_type: *const gss_OID_desc) -> gss_OID {
-    if !is_special_oid(mech_type) {
-        return mech_type as gss_OID;
-    }
-    let reg = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    for e in reg.iter() {
-        if oids::oid_equal(e.special, mech_type) {
-            return e.regular as gss_OID;
+    unsafe {
+        if !is_special_oid(mech_type) {
+            return mech_type as gss_OID;
         }
+        let reg = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+        for e in reg.iter() {
+            if oids::oid_equal(e.special, mech_type) {
+                return e.regular as gss_OID;
+            }
+        }
+        mech_type as gss_OID
     }
-    mech_type as gss_OID
 }
 
 /// `gpp_init_special_available_mechs`: pre-register special OIDs for every mech
@@ -158,23 +166,25 @@ pub unsafe fn unspecial_mech(mech_type: *const gss_OID_desc) -> gss_OID {
 /// # Safety
 /// `mechs` must point to a valid `gss_OID_set_desc` for reads, or be null.
 pub unsafe fn init_special_available_mechs(mechs: gssapi_sys::sys::gss_OID_set) {
-    if mechs.is_null() {
-        return;
-    }
-    let set = &*mechs;
-    // Hold the lock across the whole loop so the check-then-insert per mech is
-    // atomic (matching special_mech's stricter dedup).
-    let mut reg = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    for i in 0..set.count {
-        let m = set.elements.add(i) as *const gss_OID_desc;
-        if is_special_oid(m) {
-            continue;
+    unsafe {
+        if mechs.is_null() {
+            return;
         }
-        if reg.iter().any(|e| special_equal(e.special, m)) {
-            continue;
-        }
-        if let Some(nb) = oids::oid_bytes(m) {
-            register_locked(&mut reg, nb);
+        let set = &*mechs;
+        // Hold the lock across the whole loop so the check-then-insert per mech is
+        // atomic (matching special_mech's stricter dedup).
+        let mut reg = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+        for i in 0..set.count {
+            let m = set.elements.add(i) as *const gss_OID_desc;
+            if is_special_oid(m) {
+                continue;
+            }
+            if reg.iter().any(|e| special_equal(e.special, m)) {
+                continue;
+            }
+            if let Some(nb) = oids::oid_bytes(m) {
+                register_locked(&mut reg, nb);
+            }
         }
     }
 }
@@ -189,38 +199,40 @@ pub unsafe fn init_special_available_mechs(mechs: gssapi_sys::sys::gss_OID_set) 
 pub unsafe fn special_available_mechs(
     mechs: gssapi_sys::sys::gss_OID_set,
 ) -> gssapi_sys::sys::gss_OID_set {
-    use gssapi_sys::sys;
-    let mut amechs: sys::gss_OID_set = ptr::null_mut();
-    let mut min: OM_uint32 = 0;
-    if sys::gss_create_empty_oid_set(&mut min, &mut amechs) != 0 {
-        return ptr::null_mut();
-    }
-    let mut ok = true;
-    if !mechs.is_null() {
-        let set = &*mechs;
-        for i in 0..set.count {
-            let m = set.elements.add(i) as *const gss_OID_desc;
-            // special_mech() returns m unchanged if it is already special, the
-            // existing matching special OID, or a freshly registered one —
-            // exactly the three cases in the C loop.
-            let sp = special_mech(m);
-            if sp.is_null() {
-                ok = false;
-                break;
-            }
-            if sys::gss_add_oid_set_member(&mut min, sp, &mut amechs) != 0 {
-                ok = false;
-                break;
+    unsafe {
+        use gssapi_sys::sys;
+        let mut amechs: sys::gss_OID_set = ptr::null_mut();
+        let mut min: OM_uint32 = 0;
+        if sys::gss_create_empty_oid_set(&mut min, &mut amechs) != 0 {
+            return ptr::null_mut();
+        }
+        let mut ok = true;
+        if !mechs.is_null() {
+            let set = &*mechs;
+            for i in 0..set.count {
+                let m = set.elements.add(i) as *const gss_OID_desc;
+                // special_mech() returns m unchanged if it is already special, the
+                // existing matching special OID, or a freshly registered one —
+                // exactly the three cases in the C loop.
+                let sp = special_mech(m);
+                if sp.is_null() {
+                    ok = false;
+                    break;
+                }
+                if sys::gss_add_oid_set_member(&mut min, sp, &mut amechs) != 0 {
+                    ok = false;
+                    break;
+                }
             }
         }
+        let empty = amechs.is_null() || (*amechs).count == 0;
+        if !ok || empty {
+            let mut m2: OM_uint32 = 0;
+            sys::gss_release_oid_set(&mut m2, &mut amechs);
+            return ptr::null_mut();
+        }
+        amechs
     }
-    let empty = amechs.is_null() || (*amechs).count == 0;
-    if !ok || empty {
-        let mut m2: OM_uint32 = 0;
-        sys::gss_release_oid_set(&mut m2, &mut amechs);
-        return ptr::null_mut();
-    }
-    amechs
 }
 
 /// True if `oid` is one of our registered regular/special OID descriptor

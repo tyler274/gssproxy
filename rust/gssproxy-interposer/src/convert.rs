@@ -6,7 +6,7 @@ use std::os::raw::c_void;
 use std::ptr;
 
 use gssapi_sys::sys::{
-    self, gss_OID, gss_OID_desc, gss_buffer_desc, gss_buffer_t, gss_channel_bindings_t, OM_uint32,
+    self, OM_uint32, gss_OID, gss_OID_desc, gss_buffer_desc, gss_buffer_t, gss_channel_bindings_t,
 };
 use gssproxy_proto::gssx::{GssxCb, Opaque};
 
@@ -15,14 +15,16 @@ use gssproxy_proto::gssx::{GssxCb, Opaque};
 /// # Safety
 /// `buf` must be null or point to a valid `gss_buffer_desc`.
 pub unsafe fn read_buffer<'a>(buf: gss_buffer_t) -> &'a [u8] {
-    if buf.is_null() {
-        return &[];
+    unsafe {
+        if buf.is_null() {
+            return &[];
+        }
+        let b = &*buf;
+        if b.value.is_null() || b.length == 0 {
+            return &[];
+        }
+        std::slice::from_raw_parts(b.value as *const u8, b.length)
     }
-    let b = &*buf;
-    if b.value.is_null() || b.length == 0 {
-        return &[];
-    }
-    std::slice::from_raw_parts(b.value as *const u8, b.length)
 }
 
 /// Write `data` into an output `gss_buffer_t`, allocating with `malloc` so the
@@ -33,25 +35,27 @@ pub unsafe fn read_buffer<'a>(buf: gss_buffer_t) -> &'a [u8] {
 /// # Safety
 /// `out` must be null or point to a writable `gss_buffer_desc`.
 pub unsafe fn write_buffer(out: gss_buffer_t, data: &[u8]) -> bool {
-    if out.is_null() {
-        return true;
+    unsafe {
+        if out.is_null() {
+            return true;
+        }
+        let b = &mut *out;
+        if data.is_empty() {
+            b.length = 0;
+            b.value = ptr::null_mut();
+            return true;
+        }
+        let p = libc::malloc(data.len()) as *mut u8;
+        if p.is_null() {
+            b.length = 0;
+            b.value = ptr::null_mut();
+            return false;
+        }
+        ptr::copy_nonoverlapping(data.as_ptr(), p, data.len());
+        b.length = data.len() as _;
+        b.value = p as *mut c_void;
+        true
     }
-    let b = &mut *out;
-    if data.is_empty() {
-        b.length = 0;
-        b.value = ptr::null_mut();
-        return true;
-    }
-    let p = libc::malloc(data.len()) as *mut u8;
-    if p.is_null() {
-        b.length = 0;
-        b.value = ptr::null_mut();
-        return false;
-    }
-    ptr::copy_nonoverlapping(data.as_ptr(), p, data.len());
-    b.length = data.len() as _;
-    b.value = p as *mut c_void;
-    true
 }
 
 /// Borrow the DER bytes behind a `gss_OID` (None when null).
@@ -59,7 +63,7 @@ pub unsafe fn write_buffer(out: gss_buffer_t, data: &[u8]) -> bool {
 /// # Safety
 /// `oid` must be null or a valid `gss_OID`.
 pub unsafe fn oid_bytes<'a>(oid: gss_OID) -> Option<&'a [u8]> {
-    crate::oids::oid_bytes(oid as *const gss_OID_desc)
+    unsafe { crate::oids::oid_bytes(oid as *const gss_OID_desc) }
 }
 
 /// Build an owned `gss_OID_desc` over leaked bytes for a returned static OID
@@ -80,24 +84,26 @@ pub fn leak_oid(bytes: &[u8]) -> gss_OID {
 /// # Safety
 /// `cb` must be null or point to a valid `gss_channel_bindings_struct`.
 pub unsafe fn cb_to_gssx(cb: gss_channel_bindings_t) -> Option<GssxCb> {
-    if cb.is_null() {
-        return None;
-    }
-    let c = &*cb;
-    let read = |b: &gss_buffer_desc| -> Opaque {
-        if b.value.is_null() || b.length == 0 {
-            Opaque::new(Vec::new())
-        } else {
-            Opaque::new(std::slice::from_raw_parts(b.value as *const u8, b.length).to_vec())
+    unsafe {
+        if cb.is_null() {
+            return None;
         }
-    };
-    Some(GssxCb {
-        initiator_addrtype: c.initiator_addrtype as u64,
-        initiator_address: read(&c.initiator_address),
-        acceptor_addrtype: c.acceptor_addrtype as u64,
-        acceptor_address: read(&c.acceptor_address),
-        application_data: read(&c.application_data),
-    })
+        let c = &*cb;
+        let read = |b: &gss_buffer_desc| -> Opaque {
+            if b.value.is_null() || b.length == 0 {
+                Opaque::new(Vec::new())
+            } else {
+                Opaque::new(std::slice::from_raw_parts(b.value as *const u8, b.length).to_vec())
+            }
+        };
+        Some(GssxCb {
+            initiator_addrtype: c.initiator_addrtype as u64,
+            initiator_address: read(&c.initiator_address),
+            acceptor_addrtype: c.acceptor_addrtype as u64,
+            acceptor_address: read(&c.acceptor_address),
+            application_data: read(&c.application_data),
+        })
+    }
 }
 
 /// A transient `gss_OID_desc` over borrowed bytes, for passing to `sys::gss_*`.
@@ -186,8 +192,10 @@ pub fn name_type_static(bytes: &[u8]) -> Option<gss_OID> {
 /// # Safety
 /// `buf` must point to a valid `gss_buffer_desc`.
 pub unsafe fn release_buffer(buf: *mut gss_buffer_desc) {
-    let mut min: OM_uint32 = 0;
-    sys::gss_release_buffer(&mut min, buf);
+    unsafe {
+        let mut min: OM_uint32 = 0;
+        sys::gss_release_buffer(&mut min, buf);
+    }
 }
 
 /// Collect the member OIDs of a `gss_OID_set` as byte vectors.
@@ -195,31 +203,35 @@ pub unsafe fn release_buffer(buf: *mut gss_buffer_desc) {
 /// # Safety
 /// `set` must be null or a valid `gss_OID_set`.
 pub unsafe fn oidset_to_vecs(set: sys::gss_OID_set) -> Vec<Vec<u8>> {
-    if set.is_null() {
-        return Vec::new();
+    unsafe {
+        if set.is_null() {
+            return Vec::new();
+        }
+        let s = &*set;
+        let mut out = Vec::with_capacity(s.count);
+        for i in 0..s.count {
+            let m = s.elements.add(i) as gss_OID;
+            out.push(oid_bytes(m).unwrap_or(&[]).to_vec());
+        }
+        out
     }
-    let s = &*set;
-    let mut out = Vec::with_capacity(s.count);
-    for i in 0..s.count {
-        let m = s.elements.add(i) as gss_OID;
-        out.push(oid_bytes(m).unwrap_or(&[]).to_vec());
-    }
-    out
 }
 
 /// Build a freshly-allocated `gss_OID_set` from byte-vector OIDs. Returns null
 /// on allocation failure.
 pub unsafe fn build_oid_set(mechs: &[Vec<u8>]) -> sys::gss_OID_set {
-    let mut min: OM_uint32 = 0;
-    let mut set: sys::gss_OID_set = ptr::null_mut();
-    if sys::gss_create_empty_oid_set(&mut min, &mut set) != 0 {
-        return ptr::null_mut();
+    unsafe {
+        let mut min: OM_uint32 = 0;
+        let mut set: sys::gss_OID_set = ptr::null_mut();
+        if sys::gss_create_empty_oid_set(&mut min, &mut set) != 0 {
+            return ptr::null_mut();
+        }
+        for m in mechs {
+            let t = TmpOid::new(m);
+            sys::gss_add_oid_set_member(&mut min, t.as_ptr(), &mut set);
+        }
+        set
     }
-    for m in mechs {
-        let t = TmpOid::new(m);
-        sys::gss_add_oid_set_member(&mut min, t.as_ptr(), &mut set);
-    }
-    set
 }
 
 /// `gpmint_cred_to_actual_mechs`: write a remote cred's element mechs into
@@ -228,19 +240,21 @@ pub unsafe fn build_oid_set(mechs: &[Vec<u8>]) -> sys::gss_OID_set {
 /// # Safety
 /// `out` must be null or point to a writable `gss_OID_set`.
 pub unsafe fn write_actual_mechs(out: *mut sys::gss_OID_set, mechs: &[Vec<u8>]) -> bool {
-    if out.is_null() {
-        return true;
+    unsafe {
+        if out.is_null() {
+            return true;
+        }
+        if mechs.is_empty() {
+            *out = ptr::null_mut();
+            return true;
+        }
+        let set = build_oid_set(mechs);
+        if set.is_null() {
+            return false;
+        }
+        *out = set;
+        true
     }
-    if mechs.is_empty() {
-        *out = ptr::null_mut();
-        return true;
-    }
-    let set = build_oid_set(mechs);
-    if set.is_null() {
-        return false;
-    }
-    *out = set;
-    true
 }
 
 /// Read the `ccache` entry from a `gss_const_key_value_set_t`, if present.
@@ -248,8 +262,10 @@ pub unsafe fn write_actual_mechs(out: *mut sys::gss_OID_set, mechs: &[Vec<u8>]) 
 /// # Safety
 /// `store` must be null or a valid `gss_key_value_set_desc`.
 pub unsafe fn ccache_from_store(store: sys::gss_const_key_value_set_t) -> Option<String> {
-    let kv = kvset_to_vec(store);
-    kv.into_iter().find(|(k, _)| k == "ccache").map(|(_, v)| v)
+    unsafe {
+        let kv = kvset_to_vec(store);
+        kv.into_iter().find(|(k, _)| k == "ccache").map(|(_, v)| v)
+    }
 }
 
 /// Convert a `gss_const_key_value_set_t` into owned key/value pairs.
@@ -257,30 +273,34 @@ pub unsafe fn ccache_from_store(store: sys::gss_const_key_value_set_t) -> Option
 /// # Safety
 /// `store` must be null or a valid `gss_key_value_set_desc`.
 pub unsafe fn kvset_to_vec(store: sys::gss_const_key_value_set_t) -> Vec<(String, String)> {
-    if store.is_null() {
-        return Vec::new();
-    }
-    let s = &*store;
-    let mut out = Vec::with_capacity(s.count as usize);
-    for i in 0..s.count {
-        let e = &*s.elements.add(i as usize);
-        let key = cstr_to_string(e.key);
-        let value = cstr_to_string(e.value);
-        if let (Some(k), Some(v)) = (key, value) {
-            out.push((k, v));
+    unsafe {
+        if store.is_null() {
+            return Vec::new();
         }
+        let s = &*store;
+        let mut out = Vec::with_capacity(s.count as usize);
+        for i in 0..s.count {
+            let e = &*s.elements.add(i as usize);
+            let key = cstr_to_string(e.key);
+            let value = cstr_to_string(e.value);
+            if let (Some(k), Some(v)) = (key, value) {
+                out.push((k, v));
+            }
+        }
+        out
     }
-    out
 }
 
 unsafe fn cstr_to_string(p: *const std::os::raw::c_char) -> Option<String> {
-    if p.is_null() {
-        return None;
+    unsafe {
+        if p.is_null() {
+            return None;
+        }
+        std::ffi::CStr::from_ptr(p)
+            .to_str()
+            .ok()
+            .map(|s| s.to_string())
     }
-    std::ffi::CStr::from_ptr(p)
-        .to_str()
-        .ok()
-        .map(|s| s.to_string())
 }
 
 #[cfg(test)]

@@ -1,0 +1,39 @@
+name: Supply-chain audit
+
+# RustSec CVE scanning and the network-dependent cargo-deny advisories check for
+# the ./rust workspace. These need to fetch the RustSec advisory database, so
+# (unlike the offline cargo-deny licenses/bans/sources flake check in nix.yaml)
+# they live in their own workflow and also run on a schedule to catch newly
+# disclosed advisories against an unchanged dependency tree.
+on:
+  push:
+    paths:
+      - "rust/**"
+      - "nix/audit.nix"
+      - ".github/workflows/audit.yaml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "nix/audit.nix"
+      - ".github/workflows/audit.yaml"
+  schedule:
+    # Weekly, Mondays 07:00 UTC.
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: cargo-audit + cargo-deny advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      # RustSec advisory scan of the workspace Cargo.lock.
+      - name: cargo audit
+        run: nix run -L .#audit
+      # Full cargo-deny run (licenses + bans + sources + advisories).
+      - name: cargo deny check
+        run: nix run -L .#deny

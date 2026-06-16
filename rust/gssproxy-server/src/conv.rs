@@ -242,10 +242,10 @@ pub fn status_to_gssx(major: u32, minor: u32, mech: Option<&[u8]>) -> GssxStatus
         minor_status: minor as u64,
         ..Default::default()
     };
-    if let Some(m) = mech {
-        if !m.is_empty() {
-            status.mech = Opaque::new(m.to_vec());
-        }
+    if let Some(m) = mech
+        && !m.is_empty()
+    {
+        status.mech = Opaque::new(m.to_vec());
     }
     if major != 0 {
         status.major_status_string = status_string(major, sys::GSS_C_GSS_CODE as i32, mech);

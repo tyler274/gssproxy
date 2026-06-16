@@ -107,12 +107,17 @@
 
           # Rust workspace must be rustfmt-clean and clippy-clean, and the full
           # test suite (property-based + chaos/fuzz robustness tests) must pass.
-          inherit (rustChecks) rust-fmt clippy rust-tests;
+          # cargo-deny gates dependency licenses/sources/bans (offline subset).
+          inherit (rustChecks) rust-fmt clippy rust-tests cargo-deny;
         });
 
       apps = forAllSystems ({ pkgs, ... }:
-        let kani = import ./nix/kani.nix { inherit pkgs; };
-        in {
+        let
+          kani = import ./nix/kani.nix { inherit pkgs; };
+          bench = import ./nix/bench.nix { inherit pkgs; };
+          audit = import ./nix/audit.nix { inherit pkgs; };
+        in
+        {
           # Bounded Kani proofs for the FFI-free codec/helpers, run in an FHS
           # sandbox (Kani isn't packaged in nixpkgs). Not a flake check.
           #   nix run .#kani -- -p gssproxy-proto
@@ -120,12 +125,41 @@
             type = "app";
             program = "${kani.app}/bin/gssproxy-kani";
           };
+
+          # Whole-binary flamegraph of the codec benchmarks via cargo-flamegraph
+          # + perf. Needs perf access (see rust/docs/benchmarking.md).
+          #   nix run .#flamegraph
+          flamegraph = {
+            type = "app";
+            program = "${bench.flamegraph}/bin/gssproxy-flamegraph";
+          };
+
+          # RustSec CVE scan of the workspace Cargo.lock.  nix run .#audit
+          audit = {
+            type = "app";
+            program = "${audit.audit}/bin/gssproxy-audit";
+          };
+
+          # Full cargo-deny (licenses + bans + sources + advisories).
+          #   nix run .#deny
+          deny = {
+            type = "app";
+            program = "${audit.deny}/bin/gssproxy-deny";
+          };
         });
 
       devShells = forAllSystems ({ pkgs, ... }: {
         # Interactive FHS shell for running Kani locally: `nix develop .#kani`,
         # then `cargo kani -p gssproxy-proto`.
         kani = (import ./nix/kani.nix { inherit pkgs; }).shell.env;
+
+        # Benchmark shell (criterion + cargo-flamegraph + perf):
+        #   nix develop .#bench, then cargo bench --bench codec
+        bench = (import ./nix/bench.nix { inherit pkgs; }).shell;
+
+        # Supply-chain audit shell (cargo-audit + cargo-deny):
+        #   nix develop .#audit, then cargo audit / cargo deny check
+        audit = (import ./nix/audit.nix { inherit pkgs; }).shell;
 
         default = pkgs.mkShell {
           inputsFrom = [ pkgs.gssproxy ];

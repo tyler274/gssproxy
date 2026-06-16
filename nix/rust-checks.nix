@@ -94,4 +94,27 @@ in
       runHook postBuild
     '';
   });
+
+  # Supply-chain license/bans/sources gate (rust/deny.toml). This is the offline
+  # subset of `cargo deny`: it validates the dependency tree's licenses against
+  # the MIT-compatible allow-list, forbids unknown registries/git sources, and
+  # bans wildcard versions. The `advisories` check needs the network-fetched
+  # RustSec DB, so it runs in CI / the `audit` dev shell instead of here.
+  cargo-deny = pkgs.stdenv.mkDerivation (common // {
+    name = "gssproxy-rs-cargo-deny";
+    nativeBuildInputs = [
+      rustPlatform.cargoSetupHook
+      pkgs.cargo
+      pkgs.rustc
+      pkgs.cargo-deny
+    ];
+    # Resolve the workspace metadata from the vendored lockfile, no network.
+    CARGO_NET_OFFLINE = "true";
+    buildPhase = ''
+      runHook preBuild
+      echo "cargo deny check licenses bans sources"
+      cargo deny --offline check licenses bans sources
+      runHook postBuild
+    '';
+  });
 }

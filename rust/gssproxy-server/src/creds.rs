@@ -20,7 +20,7 @@ use gssproxy_proto::gssx::GssxName;
 const GSS_C_INDEFINITE: u32 = 0xffff_ffff;
 
 use crate::call::CallContext;
-use crate::config::{Service, GP_CRED_KRB5};
+use crate::config::{GP_CRED_KRB5, Service};
 use crate::conv;
 
 // GSS_C_* credential usage values (gssapi.h).
@@ -241,16 +241,17 @@ fn get_cred_environment(
         );
     }
 
-    if use_service_keytab && requested_name.is_none() {
-        if let Some(principal) = &svc.krb5_principal {
-            // The C daemon imports with length strlen+1 (trailing NUL included).
-            let mut bytes = principal.clone().into_bytes();
-            bytes.push(0);
-            requested_name = Some(
-                Name::import(&bytes, Some(consts::KRB5_NT_PRINCIPAL_NAME_OID))
-                    .map_err(|_| libc::EINVAL)?,
-            );
-        }
+    if use_service_keytab
+        && requested_name.is_none()
+        && let Some(principal) = &svc.krb5_principal
+    {
+        // The C daemon imports with length strlen+1 (trailing NUL included).
+        let mut bytes = principal.clone().into_bytes();
+        bytes.push(0);
+        requested_name = Some(
+            Name::import(&bytes, Some(consts::KRB5_NT_PRINCIPAL_NAME_OID))
+                .map_err(|_| libc::EINVAL)?,
+        );
     }
 
     if svc.krb5_store.is_empty() {
@@ -436,16 +437,16 @@ pub fn add_krb5_creds(
     desired_name: Option<&GssxName>,
     cred_usage: i32,
 ) -> Result<(Option<Cred>, Option<MemCcacheGuard>), AcqError> {
-    if let Some(inc) = in_cred {
-        if acquire_type != AcquireType::ImpName {
-            match check_cred(svc, inc, desired_name, cred_usage) {
-                Ok(()) => return Ok((None, None)),
-                Err(maj)
-                    if maj == consts::GSS_S_CREDENTIALS_EXPIRED
-                        || maj == consts::GSS_S_NO_CRED
-                        || maj == consts::GSS_S_DEFECTIVE_CREDENTIAL => {}
-                Err(_) => return Err(AcqError::new(consts::GSS_S_CRED_UNAVAIL, 0)),
-            }
+    if let Some(inc) = in_cred
+        && acquire_type != AcquireType::ImpName
+    {
+        match check_cred(svc, inc, desired_name, cred_usage) {
+            Ok(()) => return Ok((None, None)),
+            Err(maj)
+                if maj == consts::GSS_S_CREDENTIALS_EXPIRED
+                    || maj == consts::GSS_S_NO_CRED
+                    || maj == consts::GSS_S_DEFECTIVE_CREDENTIAL => {}
+            Err(_) => return Err(AcqError::new(consts::GSS_S_CRED_UNAVAIL, 0)),
         }
     }
 
@@ -541,24 +542,21 @@ fn impersonate_acquire(
             // If the impersonator credential already names the requested client,
             // we do not need to impersonate (and MIT errors on self-S4U2Self):
             // acquire the client credential directly and return it.
-            if let Some(req) = req_name {
-                if let Ok(info) = impersonator.inquire() {
-                    if let Some(comp) = &info.name {
-                        if req.compare(comp).unwrap_or(false) {
-                            if let Ok(user_cred) = wrap::acquire_cred_from(
-                                Some(req),
-                                GSS_C_INDEFINITE,
-                                mechs,
-                                cred_usage,
-                                cred_store,
-                            ) {
-                                return Ok(user_cred);
-                            }
-                            // Fall through on failure, matching the C daemon.
-                        }
-                    }
-                }
+            if let Some(req) = req_name
+                && let Ok(info) = impersonator.inquire()
+                && let Some(comp) = &info.name
+                && req.compare(comp).unwrap_or(false)
+                && let Ok(user_cred) = wrap::acquire_cred_from(
+                    Some(req),
+                    GSS_C_INDEFINITE,
+                    mechs,
+                    cred_usage,
+                    cred_store,
+                )
+            {
+                return Ok(user_cred);
             }
+            // Fall through on failure, matching the C daemon.
 
             impersonator_owned = Some(impersonator);
             impersonator_owned.as_ref().unwrap()

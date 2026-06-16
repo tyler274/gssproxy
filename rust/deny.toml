@@ -1,0 +1,65 @@
+# cargo-deny configuration for the ./rust workspace.
+#
+# Run locally:
+#   nix develop .#audit -c cargo deny check          # all checks (needs network for advisories)
+#   nix develop .#audit -c cargo deny check licenses bans sources   # offline subset
+#   nix build .#checks.x86_64-linux.cargo-deny       # the offline gate run in CI
+#
+# Tested against cargo-deny 0.19.x.
+
+[graph]
+# Check the dependency tree for all targets, not just the host, so a
+# platform-specific dependency can't sneak in a disallowed license.
+all-features = true
+
+[advisories]
+# RustSec advisory database (https://github.com/rustsec/advisory-db). Fetching
+# it needs network access, so the advisories check is run in CI / the dev shell
+# rather than in the sealed Nix `cargo-deny` flake check.
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Fail on any crate with an unfixed advisory or that has been yanked.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive, MIT-compatible licenses only - matching the project license
+# (../COPYING is MIT; see rust/Cargo.toml `license = "MIT"`). Adding a copyleft
+# (e.g. GPL/AGPL) or otherwise incompatible dependency will fail this check.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "Zlib",
+]
+# Require fairly high confidence in the detected license text.
+confidence-threshold = 0.9
+# The allow-list is intentionally a bit broader than what the current tree uses
+# (common permissive licenses), so don't warn about allowed-but-unused entries.
+unused-allowed-license = "allow"
+
+# Our own workspace crates are not published to crates.io; don't gate them.
+[licenses.private]
+ignore = true
+
+[bans]
+# Duplicate versions (e.g. bindgen 0.70 + 0.71 pulled transitively) are a
+# hygiene smell but not a correctness/legal problem, so warn rather than fail.
+multiple-versions = "warn"
+# Wildcard ("*") version requirements are forbidden, except intra-workspace
+# path dependencies which legitimately have no version requirement.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io and explicitly-listed sources are allowed; an unknown registry
+# or a git dependency from an unvetted host fails the check.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
