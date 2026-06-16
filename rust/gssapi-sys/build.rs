@@ -17,9 +17,13 @@ fn main() {
         .expect("pkg-config could not find krb5");
 
     let mut builder = bindgen::Builder::default()
-        // Match the crate edition (2024) so the generated FFI is emitted as
-        // `unsafe extern "C"` blocks, as required since edition 2024.
-        .rust_edition(bindgen::RustEdition::Edition2024)
+        // The crate is edition 2024, where `extern "C"` blocks must be marked
+        // `unsafe`. bindgen 0.72's default rust-target (1.82) already emits
+        // `unsafe extern "C"` (the unsafe-extern-blocks feature stabilised in
+        // 1.82), which compiles cleanly here. We deliberately do NOT call
+        // `.rust_edition(Edition2024)`: that requires a rust-target >= 1.85,
+        // which bindgen 0.72.1 does not know about (its newest target is 1.82),
+        // so setting it makes `generate()` fail with `UnsupportedEdition`.
         .header("krb5_wrapper.h")
         .allowlist_function("krb5_init_context")
         .allowlist_function("krb5_free_context")
