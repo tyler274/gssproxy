@@ -35,12 +35,18 @@
           inherit pkgs;
           module = self.nixosModules.gssproxy;
         };
+
+        # Full upstream in-repo test suite (tests/runtests.py via `make check`).
+        integration-tests = import ./nix/integration-tests.nix {
+          inherit pkgs;
+          inherit (pkgs) gssproxy;
+        };
       });
 
       devShells = forAllSystems ({ pkgs, ... }: {
         default = pkgs.mkShell {
           inputsFrom = [ pkgs.gssproxy ];
-          packages = with pkgs; [ autoconf automake libtool gettext ];
+          packages = with pkgs; [ autoconf automake libtool gettext python3 ];
         };
       });
 

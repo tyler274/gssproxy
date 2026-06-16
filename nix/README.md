@@ -86,11 +86,38 @@ services.gssproxy.settings."service/nfs-client" = {
 ## Building and testing
 
 - `nix build .#gssproxy` — build the daemon and the `proxymech.so` interposer.
-- `nix flake check` — run the NixOS VM smoke test
-  ([nix/test.nix](test.nix)), which verifies that gssproxy starts, registers via
-  `/proc/net/rpc/use-gss-proxy`, and that `rpc-svcgssd` is masked.
+- `nix flake check` — run all checks:
+  - `integration-tests` ([nix/integration-tests.nix](integration-tests.nix)) —
+    the full upstream in-repo test suite (`tests/runtests.py` via `make check`).
+    It stands up a real MIT KDC with an OpenLDAP backend and exercises the
+    acquire/accept/impersonation/constrained-delegation/interposer/reload flows
+    against a live gssproxy, then runs `userproxytest`. `socket_wrapper`/
+    `nss_wrapper` fake the network, so it needs neither real networking nor KVM
+    and runs on Hydra.
+  - `vm-test` ([nix/test.nix](test.nix)) — a NixOS VM smoke test that verifies
+    gssproxy starts, registers via `/proc/net/rpc/use-gss-proxy`, and that
+    `rpc-svcgssd` is masked. (Requires KVM.)
+- `nix build .#checks.<system>.integration-tests` — run just the upstream suite.
 - `nix develop` — drop into a shell with the autotools build dependencies
   (`autoreconf -fi && ./configure && make`).
+
+### Running the upstream suite outside Nix
+
+The suite (`tests/runtests.py`) historically assumes an FHS layout (tools under
+`/bin`, `/usr/lib/mit/sbin`, …), a `/bin/bash`, and that it may binary-patch
+`libgssapi` to load the interposer. To run it in non-FHS environments such as a
+Nix build, it honors these optional overrides (defaults preserve the previous
+behavior):
+
+- `GSSPROXY_TEST_BASH` — shell to run test commands with (default `/bin/bash`).
+- `GSSPROXY_TEST_OPENLDAP_SCHEMA_DIR` — directory containing the OpenLDAP
+  `*.schema` files.
+- `GSSPROXY_TEST_KRB5_LDAP_SCHEMA` — path to krb5's `kerberos.schema`.
+- `GSSPROXY_TEST_SOCKET_WRAPPER_LIB` / `GSSPROXY_TEST_NSS_WRAPPER_LIB` —
+  absolute paths to the wrapper libraries for `LD_PRELOAD`.
+- `GSSPROXY_TEST_USE_GSS_MECH_CONFIG` — load the interposer via the
+  `GSS_MECH_CONFIG` environment variable instead of binary-patching `libgssapi`
+  (needed when the embedded mech.d path is not `/etc/gss/mech.d`).
 
 ## Manual end-to-end verification
 
