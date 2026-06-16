@@ -638,8 +638,11 @@ def setup_gssapi_env(testdir, wrapenv):
     libgssapi_lib = os.path.join(libgssapi_dir, os.path.basename(lib))
     libgssapi_conf = os.path.join(libgssapi_mechd_dir, 'gssproxy-mech.conf')
 
-    shutil.copy('.libs/proxymech.so', libgssapi_dir)
-    proxymech = os.path.join(libgssapi_dir, 'proxymech.so')
+    # GSSPROXY_TEST_PROXYMECH lets the suite point at an externally built
+    # interposer (e.g. the Rust libproxymech.so) instead of the in-tree C build.
+    proxymech_src = os.environ.get("GSSPROXY_TEST_PROXYMECH", '.libs/proxymech.so')
+    shutil.copy(proxymech_src, libgssapi_dir)
+    proxymech = os.path.join(libgssapi_dir, os.path.basename(proxymech_src))
 
     t = Template(MECH_CONF_TEMPLATE)
     text = t.substitute({'PROXYMECH': proxymech})
@@ -784,7 +787,10 @@ def setup_gssproxy(testdir, env):
     socket = os.path.join(gssproxy, 'gp.sock')
     conf = os.path.join(gssproxy, 'gp.conf')
 
-    cmd = "./gssproxy -i -s " + socket + " -c " + conf
+    # GSSPROXY_TEST_DAEMON lets the suite launch an externally built daemon
+    # (e.g. the Rust gssproxy binary) instead of the in-tree ./gssproxy.
+    gpbin = os.environ.get("GSSPROXY_TEST_DAEMON", "./gssproxy")
+    cmd = gpbin + " -i -s " + socket + " -c " + conf
 
     full_command = valgrind_cmd + cmd
 

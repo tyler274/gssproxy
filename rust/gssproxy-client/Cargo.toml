@@ -1,0 +1,11 @@
+[package]
+name = "gssproxy-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Client transport for talking to the gssproxy daemon over its Unix socket"
+
+[dependencies]
+gssproxy-proto.workspace = true
+libc.workspace = true

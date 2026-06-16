@@ -1,0 +1,17 @@
+[package]
+name = "gssproxy-interposer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "proxymech.so: a GSSAPI mechanism interposer plugin that proxies to gssproxy"
+
+[lib]
+name = "proxymech"
+crate-type = ["cdylib"]
+
+[dependencies]
+gssproxy-proto.workspace = true
+gssproxy-client.workspace = true
+gssapi-sys.workspace = true
+libc.workspace = true

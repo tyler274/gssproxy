@@ -1,0 +1,14 @@
+[package]
+name = "gssapi-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Safe-ish FFI bindings to the system GSSAPI/krb5 needed by gssproxy"
+
+[dependencies]
+libc.workspace = true
+# Raw, bindgen-generated bindings to the system GSSAPI (MIT krb5). We add only
+# the gssproxy-specific OID constants, computed GSS_S_*/GSS_C_* values (bindgen
+# drops computed macros), and safe RAII wrappers on top.
+libgssapi-sys = "0.3"

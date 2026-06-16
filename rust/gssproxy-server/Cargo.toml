@@ -1,0 +1,22 @@
+[package]
+name = "gssproxy-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The gssproxy daemon, reimplemented in Rust over the system GSSAPI"
+
+[lib]
+name = "gssproxy_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gssproxy"
+path = "src/main.rs"
+
+[dependencies]
+gssproxy-proto.workspace = true
+gssapi-sys.workspace = true
+libc.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "signal"] }
+rust-ini = "0.21"

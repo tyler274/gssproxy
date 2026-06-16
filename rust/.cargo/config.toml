@@ -1,0 +1,9 @@
+# The rustup toolchain on this host ships a self-contained `lld` whose wrapper
+# references a stale Nix store path, so linking fails. Fall back to the system
+# `cc`/`ld`. (Inside `nix develop` with a Nix-provided rust toolchain this is a
+# harmless no-op.)
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-self-contained=no", "-C", "linker-features=-lld"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-self-contained=no", "-C", "linker-features=-lld"]

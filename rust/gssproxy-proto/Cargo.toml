@@ -1,0 +1,12 @@
+[package]
+name = "gssproxy-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Byte-exact XDR/SunRPC codec for the gssproxy (gssx) wire protocol"
+
+[lib]
+name = "gssproxy_proto"
+
+[dependencies]

@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "gssproxy-proto",
+    "gssapi-sys",
+    "gssproxy-client",
+    "gssproxy-server",
+    "gssproxy-interposer",
+]
+
+[workspace.package]
+version = "0.9.2"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/gssapi/gssproxy"
+rust-version = "1.74"
+
+[workspace.dependencies]
+gssproxy-proto = { path = "gssproxy-proto" }
+gssapi-sys = { path = "gssapi-sys" }
+gssproxy-client = { path = "gssproxy-client" }
+libc = "0.2"

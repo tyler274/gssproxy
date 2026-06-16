@@ -1,0 +1,112 @@
+//! RPC envelope handling and per-procedure routing.
+//!
+//! Decodes the SunRPC call envelope, validates program/version/procedure
+//! (emitting the standard RPC accept-status replies on mismatch), decodes the
+//! procedure argument, runs the handler, and encodes the reply body (envelope +
+//! result) ready to be record-marked by the caller.
+
+use gssproxy_proto::proc::*;
+use gssproxy_proto::rpc::{Message, MismatchInfo, OpaqueAuth, ReplyBody, GSSPROXY, GSSPROXYVERS};
+use gssproxy_proto::xdr::{Xdr, XdrDecoder, XdrEncoder, XdrResult};
+
+use crate::handlers;
+
+// RPC accept_stat values (rpc.h).
+const PROG_UNAVAIL: i32 = 1;
+const PROC_UNAVAIL: i32 = 3;
+const GARBAGE_ARGS: i32 = 4;
+
+/// Process one decoded request body, returning the reply body to frame, or
+/// `None` if the message isn't a well-formed call we should answer.
+pub fn handle_request(body: &[u8]) -> Option<Vec<u8>> {
+    let mut d = XdrDecoder::new(body);
+    let msg = Message::decode(&mut d).ok()?;
+    if !msg.is_call {
+        return None;
+    }
+    let call = msg.call.as_ref()?;
+    let xid = msg.xid;
+
+    if call.prog != GSSPROXY {
+        return Some(reply_accept_other(xid, PROG_UNAVAIL));
+    }
+    if call.vers != GSSPROXYVERS {
+        return Some(reply_prog_mismatch(xid));
+    }
+    let proc = match GssxProc::from_u32(call.proc_num) {
+        Some(p) => p,
+        None => return Some(reply_accept_other(xid, PROC_UNAVAIL)),
+    };
+
+    match encode_proc_reply(proc, xid, &mut d) {
+        Ok(bytes) => Some(bytes),
+        // Argument failed to decode: RPC GARBAGE_ARGS.
+        Err(_) => Some(reply_accept_other(xid, GARBAGE_ARGS)),
+    }
+}
+
+macro_rules! run {
+    ($d:expr, $xid:expr, $arg:ty, $handler:path) => {{
+        let arg = <$arg as Xdr>::decode($d)?;
+        Ok(gssproxy_proto::encode_reply($xid, &$handler(arg)))
+    }};
+}
+
+fn encode_proc_reply(proc: GssxProc, xid: u32, d: &mut XdrDecoder) -> XdrResult<Vec<u8>> {
+    match proc {
+        GssxProc::IndicateMechs => run!(d, xid, ArgIndicateMechs, handlers::indicate_mechs),
+        GssxProc::GetCallContext => run!(d, xid, ArgGetCallContext, handlers::get_call_context),
+        GssxProc::ImportAndCanonName => {
+            run!(d, xid, ArgImportAndCanonName, handlers::import_and_canon_name)
+        }
+        GssxProc::ExportCred => run!(d, xid, ArgExportCred, handlers::export_cred),
+        GssxProc::ImportCred => run!(d, xid, ArgImportCred, handlers::import_cred),
+        GssxProc::AcquireCred => run!(d, xid, ArgAcquireCred, handlers::acquire_cred),
+        GssxProc::StoreCred => run!(d, xid, ArgStoreCred, handlers::store_cred),
+        GssxProc::InitSecContext => run!(d, xid, ArgInitSecContext, handlers::init_sec_context),
+        GssxProc::AcceptSecContext => {
+            run!(d, xid, ArgAcceptSecContext, handlers::accept_sec_context)
+        }
+        GssxProc::ReleaseHandle => run!(d, xid, ArgReleaseHandle, handlers::release_handle),
+        GssxProc::GetMic => run!(d, xid, ArgGetMic, handlers::get_mic),
+        GssxProc::VerifyMic => run!(d, xid, ArgVerifyMic, handlers::verify_mic),
+        GssxProc::Wrap => run!(d, xid, ArgWrap, handlers::wrap_msg),
+        GssxProc::Unwrap => run!(d, xid, ArgUnwrap, handlers::unwrap_msg),
+        GssxProc::WrapSizeLimit => run!(d, xid, ArgWrapSizeLimit, handlers::wrap_size_limit),
+    }
+}
+
+fn reply_accept_other(xid: u32, status: i32) -> Vec<u8> {
+    encode_reply_body(
+        xid,
+        ReplyBody::AcceptedOther {
+            verf: OpaqueAuth::none(),
+            status,
+        },
+    )
+}
+
+fn reply_prog_mismatch(xid: u32) -> Vec<u8> {
+    encode_reply_body(
+        xid,
+        ReplyBody::ProgMismatch {
+            verf: OpaqueAuth::none(),
+            info: MismatchInfo {
+                low: GSSPROXYVERS,
+                high: GSSPROXYVERS,
+            },
+        },
+    )
+}
+
+fn encode_reply_body(xid: u32, reply: ReplyBody) -> Vec<u8> {
+    let msg = Message {
+        xid,
+        is_call: false,
+        call: None,
+        reply: Some(reply),
+    };
+    let mut e = XdrEncoder::new();
+    msg.encode(&mut e);
+    e.into_bytes()
+}

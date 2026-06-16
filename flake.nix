@@ -17,10 +17,12 @@
     {
       overlays.default = final: prev: {
         gssproxy = final.callPackage ./nix/package.nix { };
+        # Rust reimplementation (daemon + proxymech.so interposer).
+        gssproxy-rs = final.callPackage ./nix/rust.nix { };
       };
 
       packages = forAllSystems ({ pkgs, ... }: {
-        inherit (pkgs) gssproxy;
+        inherit (pkgs) gssproxy gssproxy-rs;
         default = pkgs.gssproxy;
       });
 
@@ -46,7 +48,20 @@
       devShells = forAllSystems ({ pkgs, ... }: {
         default = pkgs.mkShell {
           inputsFrom = [ pkgs.gssproxy ];
-          packages = with pkgs; [ autoconf automake libtool gettext python3 ];
+          packages = with pkgs; [
+            autoconf
+            automake
+            libtool
+            gettext
+            python3
+            # Rust toolchain for the port under ./rust.
+            cargo
+            rustc
+            clippy
+            rustfmt
+            pkg-config
+            krb5
+          ];
         };
       });
 
