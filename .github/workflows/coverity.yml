@@ -10,6 +10,8 @@ jobs:
   coverity:
     name: Coverity Scan
     runs-on: ubuntu-22.04
+    env:
+      RUN_COV: '0'
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
@@ -39,7 +41,7 @@ jobs:
             echo "RUN_COV=1" >> $GITHUB_ENV;
           fi
     - name: Coverity Scan
-      if: env.RUN_COV == 1
+      if: env.RUN_COV == '1'
       uses: vapier/coverity-scan-action@v1.8.0
       with:
         project: "gssproxy"

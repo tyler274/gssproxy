@@ -25,6 +25,19 @@ jobs:
       - name: cargo clippy -D warnings
         run: nix build -L .#checks.x86_64-linux.clippy
 
+  rust-tests:
+    name: Rust tests (property-based + chaos/fuzz)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      # Runs the whole `cargo test` workspace: proptest round-trip fidelity,
+      # the config/CLI property tests, and the chaos-monkey robustness fuzzers
+      # that hammer the gssx decoders with arbitrary/truncated/biased input.
+      - name: cargo test (property + chaos/fuzz)
+        run: nix build -L .#checks.x86_64-linux.rust-tests
+
   abi-parity:
     name: Interposer ABI parity (C vs Rust)
     runs-on: ubuntu-latest

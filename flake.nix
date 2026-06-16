@@ -36,7 +36,7 @@
       };
       nixosModules.default = self.nixosModules.gssproxy;
 
-      checks = forAllSystems ({ pkgs, system, ... }:
+      checks = forAllSystems ({ pkgs, ... }:
         let
           # Rust formatting (`cargo fmt --check`) and lint (`cargo clippy
           # -D warnings`) gates for the ./rust workspace.
@@ -105,8 +105,9 @@
           # Nix sources must be nixpkgs-fmt clean.
           nix-fmt = import ./nix/nix-fmt.nix { inherit pkgs; src = nixSrc; };
 
-          # Rust workspace must be rustfmt-clean and clippy-clean.
-          inherit (rustChecks) rust-fmt clippy;
+          # Rust workspace must be rustfmt-clean and clippy-clean, and the full
+          # test suite (property-based + chaos/fuzz robustness tests) must pass.
+          inherit (rustChecks) rust-fmt clippy rust-tests;
         });
 
       devShells = forAllSystems ({ pkgs, ... }: {

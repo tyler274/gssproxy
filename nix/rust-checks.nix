@@ -67,4 +67,31 @@ in
       runHook postBuild
     '';
   });
+
+  # Whole-workspace `cargo test` as an explicit gate. This is where the
+  # property-based tests (proptest round-trip fidelity in gssproxy-proto, the
+  # config/CLI parsers in gssproxy-server) and the "chaos monkey" robustness
+  # fuzzers (gssproxy-proto/tests/proptest_proto.rs: decode arbitrary/truncated/
+  # biased byte streams must never panic, hang, or over-allocate) are validated.
+  # Run in release so the higher proptest case counts (up to 512) stay fast.
+  rust-tests = pkgs.stdenv.mkDerivation (common // {
+    name = "gssproxy-rs-tests";
+    nativeBuildInputs = [
+      rustPlatform.cargoSetupHook
+      pkgs.cargo
+      pkgs.rustc
+      pkgs.pkg-config
+      rustPlatform.bindgenHook
+    ];
+    # Deterministic, reproducible fuzzing run; raise the floor for any
+    # non-pinned proptest blocks and surface full backtraces on failure.
+    PROPTEST_CASES = "1024";
+    RUST_BACKTRACE = "1";
+    buildPhase = ''
+      runHook preBuild
+      echo "cargo test --workspace --release (property + chaos/fuzz suite)"
+      cargo test --workspace --release
+      runHook postBuild
+    '';
+  });
 }
