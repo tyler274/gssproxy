@@ -19,8 +19,16 @@
 //! is being filled in incrementally.
 
 mod behavior;
+mod context;
+mod convert;
+mod creds;
+mod ctxlife;
 mod env;
 mod error;
+mod handle;
+mod mechstatus;
+mod msgprot;
+mod names;
 mod oids;
 mod special;
 

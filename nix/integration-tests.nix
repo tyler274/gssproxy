@@ -1,4 +1,4 @@
-{ pkgs, gssproxy, daemon ? null }:
+{ pkgs, gssproxy, daemon ? null, proxymech ? null }:
 
 # Runs the upstream in-repo test suite (tests/runtests.py via `make check`)
 # inside a pure Nix build. The suite stands up a real MIT KDC with an OpenLDAP
@@ -32,6 +32,11 @@ let
   # same krb5 the suite provisions so the GSSAPI/krb5 runtime matches.
   externalDaemon =
     if daemon == null then null else daemon.override { krb5 = krb5Ldap; };
+
+  # When validating an external interposer (the Rust libproxymech.so), build it
+  # against the same krb5 so the loaded plugin matches the suite's GSSAPI/krb5.
+  externalProxymech =
+    if proxymech == null then null else proxymech.override { krb5 = krb5Ldap; };
 in
 (gssproxy.override { krb5 = krb5Ldap; }).overrideAttrs (old: {
   pname = if daemon == null then "gssproxy-tests" else "gssproxy-rust-tests";
@@ -67,12 +72,17 @@ in
     # Drive the suite against the external (Rust) daemon. The C-built
     # proxymech.so and test programs are still used unchanged.
     export GSSPROXY_TEST_DAEMON="${externalDaemon}/bin/gssproxy"
+  '' + lib.optionalString (externalProxymech != null) ''
+    # Load the external (Rust) interposer instead of the in-tree C proxymech.so
+    # (oracle gate #2). The test programs and (optionally) the daemon are
+    # otherwise unchanged.
+    export GSSPROXY_TEST_PROXYMECH="${externalProxymech}/lib/libproxymech.so"
   '';
 
   # When validating the external daemon, surface the daemon log and krb5 trace
   # on failure (the sandbox testdir is otherwise discarded), so a failing
   # oracle-gate run is debuggable from `nix log`.
-  checkPhase = lib.optionalString (externalDaemon != null) ''
+  checkPhase = lib.optionalString (externalDaemon != null || externalProxymech != null) ''
     runHook preCheck
     set +e
     make ''${checkTarget:-check} ''${checkFlags:-}

@@ -179,6 +179,50 @@ pub unsafe fn init_special_available_mechs(mechs: gssapi_sys::sys::gss_OID_set) 
     }
 }
 
+/// `gpp_special_available_mechs`: build a freshly-allocated `gss_OID_set` of
+/// the special OIDs corresponding to every mech in `mechs`, registering new
+/// special OIDs as needed. Returns `GSS_C_NO_OID_SET` (null) on failure or when
+/// the resulting set would be empty (matching the C behaviour).
+///
+/// # Safety
+/// `mechs` must be null or point to a valid `gss_OID_set_desc`.
+pub unsafe fn special_available_mechs(
+    mechs: gssapi_sys::sys::gss_OID_set,
+) -> gssapi_sys::sys::gss_OID_set {
+    use gssapi_sys::sys;
+    let mut amechs: sys::gss_OID_set = ptr::null_mut();
+    let mut min: OM_uint32 = 0;
+    if sys::gss_create_empty_oid_set(&mut min, &mut amechs) != 0 {
+        return ptr::null_mut();
+    }
+    let mut ok = true;
+    if !mechs.is_null() {
+        let set = &*mechs;
+        for i in 0..set.count {
+            let m = set.elements.add(i) as *const gss_OID_desc;
+            // special_mech() returns m unchanged if it is already special, the
+            // existing matching special OID, or a freshly registered one —
+            // exactly the three cases in the C loop.
+            let sp = special_mech(m);
+            if sp.is_null() {
+                ok = false;
+                break;
+            }
+            if sys::gss_add_oid_set_member(&mut min, sp, &mut amechs) != 0 {
+                ok = false;
+                break;
+            }
+        }
+    }
+    let empty = amechs.is_null() || (*amechs).count == 0;
+    if !ok || empty {
+        let mut m2: OM_uint32 = 0;
+        sys::gss_release_oid_set(&mut m2, &mut amechs);
+        return ptr::null_mut();
+    }
+    amechs
+}
+
 /// True if `oid` is one of our registered regular/special OID descriptor
 /// pointers (compared by identity, as in `gssi_internal_release_oid`).
 pub fn is_registered_ptr(oid: *const gss_OID_desc) -> bool {

@@ -12,6 +12,7 @@
 
 pub use libgssapi_sys as sys;
 
+pub mod ccache;
 pub mod consts;
 pub mod krb5;
 pub mod seal;

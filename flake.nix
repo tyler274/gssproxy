@@ -66,6 +66,24 @@
           inherit pkgs;
           inherit (pkgs) gssproxy gssproxy-rs;
         };
+
+        # Upstream suite with the Rust libproxymech.so loaded in place of the
+        # C interposer (oracle gate #2), talking to the C daemon. This proves
+        # the Rust interposer data path is wire/ABI compatible.
+        integration-tests-rust-proxymech = import ./nix/integration-tests.nix {
+          inherit pkgs;
+          inherit (pkgs) gssproxy;
+          proxymech = pkgs.gssproxy-rs;
+        };
+
+        # Upstream suite end-to-end on the Rust port: Rust daemon AND Rust
+        # interposer, with only the C test programs unchanged.
+        integration-tests-all-rust = import ./nix/integration-tests.nix {
+          inherit pkgs;
+          inherit (pkgs) gssproxy;
+          daemon = pkgs.gssproxy-rs;
+          proxymech = pkgs.gssproxy-rs;
+        };
       });
 
       devShells = forAllSystems ({ pkgs, ... }: {
@@ -82,6 +100,7 @@
             rustc
             clippy
             rustfmt
+            rust-analyzer
             pkg-config
             krb5
             # Supplies libclang/LIBCLANG_PATH so libgssapi-sys's bindgen build

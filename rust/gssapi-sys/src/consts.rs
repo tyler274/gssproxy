@@ -23,7 +23,12 @@ const fn calling_error(n: OM_uint32) -> OM_uint32 {
     n << GSS_C_CALLING_ERROR_OFFSET
 }
 
+pub const GSS_S_CALL_INACCESSIBLE_READ: OM_uint32 = calling_error(1);
+pub const GSS_S_CALL_INACCESSIBLE_WRITE: OM_uint32 = calling_error(2);
 pub const GSS_S_CALL_BAD_STRUCTURE: OM_uint32 = calling_error(3);
+
+pub const GSS_S_BAD_NAME: OM_uint32 = routine_error(2);
+pub const GSS_S_BAD_STATUS: OM_uint32 = routine_error(5);
 
 pub const GSS_S_FAILURE: OM_uint32 = routine_error(13);
 /// MIT defines `GSS_S_CRED_UNAVAIL` as `GSS_S_FAILURE`.
@@ -31,6 +36,7 @@ pub const GSS_S_CRED_UNAVAIL: OM_uint32 = GSS_S_FAILURE;
 pub const GSS_S_NO_CRED: OM_uint32 = routine_error(7);
 pub const GSS_S_DEFECTIVE_CREDENTIAL: OM_uint32 = routine_error(10);
 pub const GSS_S_CREDENTIALS_EXPIRED: OM_uint32 = routine_error(11);
+pub const GSS_S_CONTEXT_EXPIRED: OM_uint32 = routine_error(12);
 pub const GSS_S_NO_CONTEXT: OM_uint32 = routine_error(8);
 pub const GSS_S_DEFECTIVE_TOKEN: OM_uint32 = routine_error(9);
 pub const GSS_S_BAD_MECH: OM_uint32 = routine_error(1);
@@ -71,6 +77,15 @@ pub const NT_HOSTBASED_SERVICE_OID: &[u8] = &[
 
 /// `GSS_C_NT_EXPORT_NAME` OID: 1.3.6.1.5.6.4
 pub const NT_EXPORT_NAME_OID: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x06, 0x04];
+
+/// `GSS_C_NT_HOSTBASED_SERVICE_X` OID: 1.3.6.1.5.6.2
+pub const NT_HOSTBASED_SERVICE_X_OID: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x06, 0x02];
+
+/// `GSS_C_NT_ANONYMOUS` OID: 1.3.6.1.5.6.3
+pub const NT_ANONYMOUS_OID: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x06, 0x03];
+
+/// `GSS_C_NT_COMPOSITE_EXPORT` OID: 1.3.6.1.5.6.6
+pub const NT_COMPOSITE_EXPORT_OID: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x06, 0x06];
 
 /// `GSS_C_NT_MACHINE_UID_NAME` OID: 1.2.840.113554.1.2.1.2
 pub const NT_MACHINE_UID_NAME_OID: &[u8] = &[

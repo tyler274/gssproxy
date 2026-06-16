@@ -8,6 +8,7 @@ description = "Client transport for talking to the gssproxy daemon over its Unix
 
 [dependencies]
 gssproxy-proto.workspace = true
+gssapi-sys.workspace = true
 libc.workspace = true
 
 [dev-dependencies]

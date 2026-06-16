@@ -34,6 +34,8 @@ use gssproxy_proto::proc::GssxProc;
 use gssproxy_proto::rpc::{Message, ReplyBody, MAX_RPC_SIZE};
 use gssproxy_proto::xdr::{Xdr, XdrDecoder};
 
+pub mod gpm;
+
 /// Compiled-in default socket path (autotools `GP_SOCKET_NAME`).
 const GP_SOCKET_NAME: &str = "/var/lib/gssproxy/default.sock";
 
