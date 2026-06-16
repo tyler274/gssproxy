@@ -49,5 +49,22 @@ pkgs.testers.nixosTest {
 
     # Our generated drop-in config must be in place.
     server.succeed("grep -q kernel_nfsd /etc/gssproxy/gssproxy.conf")
+
+    # Regression test: gssproxy must shut down cleanly on SIGTERM. When linked
+    # against krb5's embedded (BUILTIN_MODULE) libverto, verto_cleanup() frees a
+    # static record and aborts ("free(): invalid pointer"), so systemd records a
+    # core-dump on every stop. The package disables that exit-time call; assert
+    # the daemon stops without being killed by a signal.
+    server.succeed("systemctl stop gssproxy.service")
+    result = server.succeed(
+        "systemctl show -p Result --value gssproxy.service"
+    ).strip()
+    assert result == "success", f"gssproxy did not stop cleanly: Result={result}"
+
+    # After a restart the daemon re-registers with the kernel on its own via the
+    # retry timer, with no manual intervention; the proc switch stays claimed.
+    server.succeed("systemctl start gssproxy.service")
+    server.wait_for_unit("gssproxy.service")
+    server.wait_until_succeeds("grep -q 1 /proc/net/rpc/use-gss-proxy")
   '';
 }
