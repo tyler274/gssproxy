@@ -525,6 +525,294 @@ impl Context {
         check(major, minor)?;
         Ok(Context(out))
     }
+
+    /// `gss_inquire_context`: the context's names, lifetime, mech, flags, and
+    /// initiator/open state. The mechanism OID is copied (it is owned by GSSAPI).
+    pub fn inquire(&self) -> Result<ContextInfo> {
+        let mut src: gss_name_t = ptr::null_mut();
+        let mut targ: gss_name_t = ptr::null_mut();
+        let mut lifetime: OM_uint32 = 0;
+        let mut mech: sys::gss_OID = ptr::null_mut();
+        let mut flags: OM_uint32 = 0;
+        let mut locally: c_int = 0;
+        let mut open: c_int = 0;
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe {
+            sys::gss_inquire_context(
+                &mut minor,
+                self.0,
+                &mut src,
+                &mut targ,
+                &mut lifetime,
+                &mut mech,
+                &mut flags,
+                &mut locally,
+                &mut open,
+            )
+        };
+        check(major, minor)?;
+        Ok(ContextInfo {
+            src_name: if src.is_null() { None } else { Some(Name(src)) },
+            targ_name: if targ.is_null() { None } else { Some(Name(targ)) },
+            lifetime,
+            mech: unsafe { oid_to_vec(mech) },
+            flags,
+            locally_initiated: locally != 0,
+            open: open != 0,
+        })
+    }
+
+    /// `gss_get_mic`.
+    pub fn get_mic(&self, qop: OM_uint32, message: &[u8]) -> Result<Vec<u8>> {
+        let mut msg = input_buffer(message);
+        let mut token = OutputBuffer::empty();
+        let mut minor: OM_uint32 = 0;
+        let major =
+            unsafe { sys::gss_get_mic(&mut minor, self.0, qop, &mut msg, token.as_mut_ptr()) };
+        check(major, minor)?;
+        Ok(token.to_vec())
+    }
+
+    /// `gss_verify_mic`, returning the resulting QOP state.
+    pub fn verify_mic(&self, message: &[u8], token: &[u8]) -> Result<OM_uint32> {
+        let mut msg = input_buffer(message);
+        let mut tok = input_buffer(token);
+        let mut qop: sys::gss_qop_t = 0;
+        let mut minor: OM_uint32 = 0;
+        let major =
+            unsafe { sys::gss_verify_mic(&mut minor, self.0, &mut msg, &mut tok, &mut qop) };
+        check(major, minor)?;
+        Ok(qop)
+    }
+
+    /// `gss_wrap`, returning `(token, conf_state)`.
+    pub fn wrap(&self, conf_req: bool, qop: OM_uint32, message: &[u8]) -> Result<(Vec<u8>, bool)> {
+        let mut msg = input_buffer(message);
+        let mut conf: c_int = 0;
+        let mut out = OutputBuffer::empty();
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe {
+            sys::gss_wrap(
+                &mut minor,
+                self.0,
+                conf_req as c_int,
+                qop,
+                &mut msg,
+                &mut conf,
+                out.as_mut_ptr(),
+            )
+        };
+        check(major, minor)?;
+        Ok((out.to_vec(), conf != 0))
+    }
+
+    /// `gss_unwrap`, returning `(message, conf_state, qop_state)`.
+    pub fn unwrap(&self, token: &[u8]) -> Result<(Vec<u8>, bool, OM_uint32)> {
+        let mut tok = input_buffer(token);
+        let mut conf: c_int = 0;
+        let mut qop: sys::gss_qop_t = 0;
+        let mut out = OutputBuffer::empty();
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe {
+            sys::gss_unwrap(&mut minor, self.0, &mut tok, out.as_mut_ptr(), &mut conf, &mut qop)
+        };
+        check(major, minor)?;
+        Ok((out.to_vec(), conf != 0, qop))
+    }
+
+    /// `gss_wrap_size_limit`: the largest message that wraps within `req_output_size`.
+    pub fn wrap_size_limit(
+        &self,
+        conf_req: bool,
+        qop: OM_uint32,
+        req_output_size: OM_uint32,
+    ) -> Result<OM_uint32> {
+        let mut max: OM_uint32 = 0;
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe {
+            sys::gss_wrap_size_limit(
+                &mut minor,
+                self.0,
+                conf_req as c_int,
+                qop,
+                req_output_size,
+                &mut max,
+            )
+        };
+        check(major, minor)?;
+        Ok(max)
+    }
+}
+
+/// Result of [`Context::inquire`].
+pub struct ContextInfo {
+    pub src_name: Option<Name>,
+    pub targ_name: Option<Name>,
+    pub lifetime: OM_uint32,
+    pub mech: Vec<u8>,
+    pub flags: OM_uint32,
+    pub locally_initiated: bool,
+    pub open: bool,
+}
+
+/// Borrowed channel-bindings for init/accept (`gss_channel_bindings_struct`).
+pub struct ChannelBindings<'a> {
+    pub initiator_addrtype: OM_uint32,
+    pub initiator_address: &'a [u8],
+    pub acceptor_addrtype: OM_uint32,
+    pub acceptor_address: &'a [u8],
+    pub application_data: &'a [u8],
+}
+
+impl ChannelBindings<'_> {
+    fn to_raw(&self) -> sys::gss_channel_bindings_struct {
+        sys::gss_channel_bindings_struct {
+            initiator_addrtype: self.initiator_addrtype,
+            initiator_address: input_buffer(self.initiator_address),
+            acceptor_addrtype: self.acceptor_addrtype,
+            acceptor_address: input_buffer(self.acceptor_address),
+            application_data: input_buffer(self.application_data),
+        }
+    }
+}
+
+/// Result of [`init_sec_context`].
+pub struct InitResult {
+    pub context: Context,
+    pub actual_mech: Vec<u8>,
+    pub output: Vec<u8>,
+    pub continue_needed: bool,
+}
+
+/// `gss_init_sec_context`. `existing` is the context handle from a previous step
+/// (consumed). On a GSSAPI error the partial context is released automatically.
+#[allow(clippy::too_many_arguments)]
+pub fn init_sec_context(
+    cred: Option<&Cred>,
+    existing: Option<Context>,
+    target: &Name,
+    mech: &[u8],
+    req_flags: OM_uint32,
+    time_req: OM_uint32,
+    cb: Option<&ChannelBindings>,
+    input: &[u8],
+) -> Result<InitResult> {
+    let mut ctx_raw = existing.map(Context::into_raw).unwrap_or(ptr::null_mut());
+    let mut oid = oid_desc(mech);
+    let mut input_buf = input_buffer(input);
+    let mut actual: sys::gss_OID = ptr::null_mut();
+    let mut out = OutputBuffer::empty();
+    let mut minor: OM_uint32 = 0;
+    let cred_raw = cred.map(Cred::as_raw).unwrap_or(ptr::null_mut());
+    let mut cb_storage;
+    let cb_ptr = match cb {
+        Some(c) => {
+            cb_storage = c.to_raw();
+            &mut cb_storage as *mut sys::gss_channel_bindings_struct
+        }
+        None => ptr::null_mut(),
+    };
+    let major = unsafe {
+        sys::gss_init_sec_context(
+            &mut minor,
+            cred_raw,
+            &mut ctx_raw,
+            target.as_raw(),
+            &mut oid,
+            req_flags,
+            time_req,
+            cb_ptr,
+            &mut input_buf,
+            &mut actual,
+            out.as_mut_ptr(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    // Own the (possibly partial) context so it is released on the error path.
+    let context = Context(ctx_raw);
+    if is_error(major) {
+        return Err(make_error(major, minor));
+    }
+    Ok(InitResult {
+        context,
+        actual_mech: unsafe { oid_to_vec(actual) },
+        output: out.to_vec(),
+        continue_needed: major == sys::GSS_S_CONTINUE_NEEDED,
+    })
+}
+
+/// Result of [`accept_sec_context`].
+pub struct AcceptResult {
+    pub context: Context,
+    pub src_name: Option<Name>,
+    pub mech: Vec<u8>,
+    pub output: Vec<u8>,
+    pub ret_flags: OM_uint32,
+    pub delegated_cred: Option<Cred>,
+    pub continue_needed: bool,
+}
+
+/// `gss_accept_sec_context`. `existing` is the context handle from a previous
+/// step (consumed). On a GSSAPI error the partial context is released.
+pub fn accept_sec_context(
+    existing: Option<Context>,
+    cred: Option<&Cred>,
+    input: &[u8],
+    cb: Option<&ChannelBindings>,
+    ret_deleg: bool,
+) -> Result<AcceptResult> {
+    let mut ctx_raw = existing.map(Context::into_raw).unwrap_or(ptr::null_mut());
+    let cred_raw = cred.map(Cred::as_raw).unwrap_or(ptr::null_mut());
+    let mut input_buf = input_buffer(input);
+    let mut src: gss_name_t = ptr::null_mut();
+    let mut mech: sys::gss_OID = ptr::null_mut();
+    let mut out = OutputBuffer::empty();
+    let mut ret_flags: OM_uint32 = 0;
+    let mut deleg: gss_cred_id_t = ptr::null_mut();
+    let mut minor: OM_uint32 = 0;
+    let mut cb_storage;
+    let cb_ptr = match cb {
+        Some(c) => {
+            cb_storage = c.to_raw();
+            &mut cb_storage as *mut sys::gss_channel_bindings_struct
+        }
+        None => ptr::null_mut(),
+    };
+    let deleg_ptr = if ret_deleg {
+        &mut deleg as *mut gss_cred_id_t
+    } else {
+        ptr::null_mut()
+    };
+    let major = unsafe {
+        sys::gss_accept_sec_context(
+            &mut minor,
+            &mut ctx_raw,
+            cred_raw,
+            &mut input_buf,
+            cb_ptr,
+            &mut src,
+            &mut mech,
+            out.as_mut_ptr(),
+            &mut ret_flags,
+            ptr::null_mut(),
+            deleg_ptr,
+        )
+    };
+    let context = Context(ctx_raw);
+    let delegated_cred = if deleg.is_null() { None } else { Some(Cred(deleg)) };
+    if is_error(major) {
+        return Err(make_error(major, minor));
+    }
+    Ok(AcceptResult {
+        context,
+        src_name: if src.is_null() { None } else { Some(Name(src)) },
+        mech: unsafe { oid_to_vec(mech) },
+        output: out.to_vec(),
+        ret_flags,
+        delegated_cred,
+        continue_needed: major == sys::GSS_S_CONTINUE_NEEDED,
+    })
 }
 
 impl Drop for Context {

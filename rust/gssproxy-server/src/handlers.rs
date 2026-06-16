@@ -11,8 +11,46 @@ use gssproxy_proto::gssx::*;
 use gssproxy_proto::proc::*;
 
 use crate::call::CallContext;
-use crate::conv;
+use crate::config::Service;
+use crate::conv::{self, ExpCtxType};
 use crate::creds::{self, AcquireType};
+
+// GSS_C_* credential usage values (gssapi.h).
+const GSS_C_INITIATE: i32 = 1;
+const GSS_C_ACCEPT: i32 = 2;
+/// `GSS_C_DELEG_FLAG`.
+const GSS_C_DELEG_FLAG: u32 = 1;
+
+/// `gp_filter_flags`: apply the service's enforced/filtered request flags.
+fn filter_flags(svc: &Service, mut flags: u32) -> u32 {
+    flags |= svc.enforce_flags;
+    flags &= !svc.filter_flags;
+    flags
+}
+
+/// Borrow a `gssx_cb` as [`wrap::ChannelBindings`].
+fn to_cb(c: &GssxCb) -> wrap::ChannelBindings<'_> {
+    wrap::ChannelBindings {
+        initiator_addrtype: c.initiator_addrtype as u32,
+        initiator_address: c.initiator_address.as_slice(),
+        acceptor_addrtype: c.acceptor_addrtype as u32,
+        acceptor_address: c.acceptor_address.as_slice(),
+        application_data: c.application_data.as_slice(),
+    }
+}
+
+fn status_err(e: &GssError) -> GssxStatus {
+    conv::status_to_gssx(e.major, e.minor, None)
+}
+
+/// `GSS_S_FAILURE` / `EINVAL`, used when required call context is missing.
+fn invalid() -> GssError {
+    GssError {
+        major: consts::GSS_S_FAILURE,
+        minor: EINVAL,
+        messages: Vec::new(),
+    }
+}
 
 /// The `localname` special option key, matched/emitted exactly as the C daemon
 /// does: `sizeof("localname")` includes the trailing NUL, so the wire key is
@@ -23,10 +61,6 @@ const EINVAL: u32 = 22;
 
 fn success(mech: Option<&[u8]>) -> GssxStatus {
     conv::status_to_gssx(0, 0, mech)
-}
-
-fn failure() -> GssxStatus {
-    conv::status_to_gssx(consts::GSS_S_FAILURE, 0, None)
 }
 
 fn oids_to_gssx(oids: &[Vec<u8>]) -> GssxOidSet {
@@ -165,6 +199,11 @@ pub fn get_call_context(_ctx: &CallContext, _arg: ArgGetCallContext) -> ResGetCa
     ResGetCallContext::default()
 }
 
+// `gp_export_cred`, `gp_import_cred`, and `gp_store_cred` are `GP_EXEC_UNUSED_FUNC`
+// in the C daemon: they leave the (zero-initialized) result untouched and return
+// success. A defaulted result encodes byte-identically (COMPLETE status, no
+// handle, empty option/oid sets).
+
 pub fn export_cred(_ctx: &CallContext, _arg: ArgExportCred) -> ResExportCred {
     ResExportCred::default()
 }
@@ -285,18 +324,188 @@ fn acquire_cred_inner(
     }
 }
 
-pub fn init_sec_context(_ctx: &CallContext, _arg: ArgInitSecContext) -> ResInitSecContext {
-    ResInitSecContext {
-        status: failure(),
-        ..Default::default()
+/// `gp_init_sec_context`. The cc-sync (`gp_check_sync_creds`) path is omitted;
+/// services without `allow_client_ccache_sync` never trigger it.
+pub fn init_sec_context(ctx: &CallContext, arg: ArgInitSecContext) -> ResInitSecContext {
+    let mut res = ResInitSecContext::default();
+    let mech = arg.mech_type.as_slice().to_vec();
+    let status_mech = if mech.is_empty() { None } else { Some(mech.as_slice()) };
+    match init_inner(ctx, &arg) {
+        Ok((continue_needed, handle, token)) => {
+            let major = if continue_needed {
+                gssapi_sys::sys::GSS_S_CONTINUE_NEEDED
+            } else {
+                0
+            };
+            res.status = conv::status_to_gssx(major, 0, status_mech);
+            res.context_handle = Some(handle);
+            res.output_token = token;
+        }
+        Err(e) => res.status = conv::status_to_gssx(e.major, e.minor, status_mech),
     }
+    res
 }
 
-pub fn accept_sec_context(_ctx: &CallContext, _arg: ArgAcceptSecContext) -> ResAcceptSecContext {
-    ResAcceptSecContext {
-        status: failure(),
-        ..Default::default()
+fn init_inner(
+    ctx: &CallContext,
+    arg: &ArgInitSecContext,
+) -> Result<(bool, GssxCtx, Option<GssxBuffer>), GssError> {
+    let svc = ctx.service.as_ref().ok_or_else(invalid)?;
+    let handle = ctx.creds.as_deref().ok_or_else(invalid)?;
+
+    let mut exp_type = conv::exported_context_type(&arg.call_ctx.options);
+
+    let existing = match &arg.context_handle {
+        Some(g) => Some(conv::import_gssx_ctx(g)?),
+        None => None,
+    };
+
+    let mut cred = match &arg.cred_handle {
+        Some(g) => conv::import_gssx_cred(handle, g)?,
+        None => None,
+    };
+
+    let target = match &arg.target_name {
+        Some(g) => conv::gssx_to_name(g)?,
+        None => return Err(invalid()),
+    };
+
+    let mech = arg.mech_type.as_slice();
+
+    if cred.is_none() {
+        if mech == consts::KRB5_MECH_OID {
+            cred = creds::add_krb5_creds(ctx, svc, AcquireType::Normal, None, None, GSS_C_INITIATE)
+                .map_err(|e| GssError {
+                    major: e.major,
+                    minor: e.minor,
+                    messages: Vec::new(),
+                })?;
+        } else {
+            return Err(GssError {
+                major: consts::GSS_S_NO_CRED,
+                minor: 0,
+                messages: Vec::new(),
+            });
+        }
     }
+
+    if let Err(major) = creds::cred_allowed(svc, cred.as_ref(), &target) {
+        return Err(GssError {
+            major,
+            minor: 0,
+            messages: Vec::new(),
+        });
+    }
+
+    let req_flags = filter_flags(svc, arg.req_flags as u32);
+    let cb = arg.input_cb.as_ref().map(to_cb);
+    let input = arg.input_token.as_ref().map(|b| b.as_slice()).unwrap_or(&[]);
+
+    let r = wrap::init_sec_context(
+        cred.as_ref(),
+        existing,
+        &target,
+        mech,
+        req_flags,
+        arg.time_req as u32,
+        cb.as_ref(),
+        input,
+    )?;
+
+    if r.continue_needed {
+        exp_type = ExpCtxType::Partial;
+    }
+
+    let handle_out = conv::export_gssx_ctx(r.context, exp_type, Some(mech))?;
+    let token = if r.output.is_empty() {
+        None
+    } else {
+        Some(Opaque::new(r.output))
+    };
+    Ok((r.continue_needed, handle_out, token))
+}
+
+/// `gp_accept_sec_context`. The cc-sync and `linux_creds_v1` export paths are
+/// omitted (default `EXP_CREDS_NO_CREDS`, no `allow_client_ccache_sync`).
+pub fn accept_sec_context(ctx: &CallContext, arg: ArgAcceptSecContext) -> ResAcceptSecContext {
+    let mut res = ResAcceptSecContext::default();
+    match accept_inner(ctx, &arg) {
+        Ok((continue_needed, handle, token, deleg, mech)) => {
+            let major = if continue_needed {
+                gssapi_sys::sys::GSS_S_CONTINUE_NEEDED
+            } else {
+                0
+            };
+            let status_mech = if mech.is_empty() { None } else { Some(mech.as_slice()) };
+            res.status = conv::status_to_gssx(major, 0, status_mech);
+            res.context_handle = Some(handle);
+            res.output_token = Some(token);
+            res.delegated_cred_handle = deleg;
+        }
+        Err(e) => res.status = conv::status_to_gssx(e.major, e.minor, None),
+    }
+    res
+}
+
+#[allow(clippy::type_complexity)]
+fn accept_inner(
+    ctx: &CallContext,
+    arg: &ArgAcceptSecContext,
+) -> Result<(bool, GssxCtx, GssxBuffer, Option<GssxCred>, Vec<u8>), GssError> {
+    let svc = ctx.service.as_ref().ok_or_else(invalid)?;
+    let handle = ctx.creds.as_deref().ok_or_else(invalid)?;
+
+    let mut exp_type = conv::exported_context_type(&arg.call_ctx.options);
+
+    let existing = match &arg.context_handle {
+        Some(g) => Some(conv::import_gssx_ctx(g)?),
+        None => None,
+    };
+
+    let mut cred = match &arg.cred_handle {
+        Some(g) => conv::import_gssx_cred(handle, g)?,
+        None => None,
+    };
+
+    if cred.is_none() {
+        cred = creds::add_krb5_creds(ctx, svc, AcquireType::Normal, None, None, GSS_C_ACCEPT)
+            .map_err(|e| GssError {
+                major: e.major,
+                minor: e.minor,
+                messages: Vec::new(),
+            })?;
+    }
+
+    let cb = arg.input_cb.as_ref().map(to_cb);
+    let r = wrap::accept_sec_context(
+        existing,
+        cred.as_ref(),
+        arg.input_token.as_slice(),
+        cb.as_ref(),
+        arg.ret_deleg_cred,
+    )?;
+
+    if r.continue_needed {
+        exp_type = ExpCtxType::Partial;
+    }
+
+    let mech = r.mech.clone();
+    let output = r.output.clone();
+    let ret_flags = r.ret_flags;
+    let delegated = r.delegated_cred;
+
+    let handle_out = conv::export_gssx_ctx(r.context, exp_type, Some(&mech))?;
+
+    let deleg = if ret_flags & GSS_C_DELEG_FLAG != 0 && arg.ret_deleg_cred {
+        match delegated {
+            Some(dch) => Some(conv::export_gssx_cred(handle, dch)?),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    Ok((r.continue_needed, handle_out, Opaque::new(output), deleg, mech))
 }
 
 /// The daemon is stateless (every handle is returned with `needs_release =
@@ -313,37 +522,112 @@ pub fn release_handle(_ctx: &CallContext, arg: ArgReleaseHandle) -> ResReleaseHa
     }
 }
 
-pub fn get_mic(_ctx: &CallContext, _arg: ArgGetMic) -> ResGetMic {
-    ResGetMic {
-        status: failure(),
-        ..Default::default()
+/// `gp_get_mic`.
+pub fn get_mic(_ctx: &CallContext, arg: ArgGetMic) -> ResGetMic {
+    let mut res = ResGetMic::default();
+    let exp_type = conv::exported_context_type(&arg.call_ctx.options);
+    let inner = || -> Result<(GssxCtx, Vec<u8>), GssError> {
+        let context = conv::import_gssx_ctx(&arg.context_handle)?;
+        let token = context.get_mic(arg.qop_req as u32, arg.message_buffer.as_slice())?;
+        let handle = conv::export_gssx_ctx(context, exp_type, None)?;
+        Ok((handle, token))
+    };
+    match inner() {
+        Ok((handle, token)) => {
+            res.status = success(None);
+            res.context_handle = Some(handle);
+            res.token_buffer = Opaque::new(token);
+            res.qop_state = Some(arg.qop_req);
+        }
+        Err(e) => res.status = status_err(&e),
     }
+    res
 }
 
-pub fn verify_mic(_ctx: &CallContext, _arg: ArgVerifyMic) -> ResVerifyMic {
-    ResVerifyMic {
-        status: failure(),
-        ..Default::default()
+/// `gp_verify_mic`.
+pub fn verify_mic(_ctx: &CallContext, arg: ArgVerifyMic) -> ResVerifyMic {
+    let mut res = ResVerifyMic::default();
+    let exp_type = conv::exported_context_type(&arg.call_ctx.options);
+    let inner = || -> Result<(GssxCtx, u32), GssError> {
+        let context = conv::import_gssx_ctx(&arg.context_handle)?;
+        let qop = context.verify_mic(arg.message_buffer.as_slice(), arg.token_buffer.as_slice())?;
+        let handle = conv::export_gssx_ctx(context, exp_type, None)?;
+        Ok((handle, qop))
+    };
+    match inner() {
+        Ok((handle, qop)) => {
+            res.status = success(None);
+            res.context_handle = Some(handle);
+            res.qop_state = Some(qop as u64);
+        }
+        Err(e) => res.status = status_err(&e),
     }
+    res
 }
 
-pub fn wrap_msg(_ctx: &CallContext, _arg: ArgWrap) -> ResWrap {
-    ResWrap {
-        status: failure(),
-        ..Default::default()
+/// `gp_wrap`.
+pub fn wrap_msg(_ctx: &CallContext, arg: ArgWrap) -> ResWrap {
+    let mut res = ResWrap::default();
+    let exp_type = conv::exported_context_type(&arg.call_ctx.options);
+    let inner = || -> Result<(GssxCtx, Vec<u8>, bool), GssError> {
+        let context = conv::import_gssx_ctx(&arg.context_handle)?;
+        let input = arg.message_buffer.first().map(|b| b.as_slice()).unwrap_or(&[]);
+        let (token, conf) = context.wrap(arg.conf_req, arg.qop_state as u32, input)?;
+        let handle = conv::export_gssx_ctx(context, exp_type, None)?;
+        Ok((handle, token, conf))
+    };
+    match inner() {
+        Ok((handle, token, conf)) => {
+            res.status = success(None);
+            res.context_handle = Some(handle);
+            // The C handler echoes back the *input* qop_state.
+            res.qop_state = Some(arg.qop_state);
+            res.conf_state = Some(conf);
+            res.token_buffer = vec![Opaque::new(token)];
+        }
+        Err(e) => res.status = status_err(&e),
     }
+    res
 }
 
-pub fn unwrap_msg(_ctx: &CallContext, _arg: ArgUnwrap) -> ResUnwrap {
-    ResUnwrap {
-        status: failure(),
-        ..Default::default()
+/// `gp_unwrap`.
+pub fn unwrap_msg(_ctx: &CallContext, arg: ArgUnwrap) -> ResUnwrap {
+    let mut res = ResUnwrap::default();
+    let exp_type = conv::exported_context_type(&arg.call_ctx.options);
+    let inner = || -> Result<(GssxCtx, Vec<u8>, bool), GssError> {
+        let context = conv::import_gssx_ctx(&arg.context_handle)?;
+        let input = arg.token_buffer.first().map(|b| b.as_slice()).unwrap_or(&[]);
+        let (message, conf, _qop) = context.unwrap(input)?;
+        let handle = conv::export_gssx_ctx(context, exp_type, None)?;
+        Ok((handle, message, conf))
+    };
+    match inner() {
+        Ok((handle, message, conf)) => {
+            res.status = success(None);
+            res.context_handle = Some(handle);
+            // The C handler echoes back the *input* qop_state.
+            res.qop_state = Some(arg.qop_state);
+            res.conf_state = Some(conf);
+            res.message_buffer = vec![Opaque::new(message)];
+        }
+        Err(e) => res.status = status_err(&e),
     }
+    res
 }
 
-pub fn wrap_size_limit(_ctx: &CallContext, _arg: ArgWrapSizeLimit) -> ResWrapSizeLimit {
-    ResWrapSizeLimit {
-        status: failure(),
-        ..Default::default()
+/// `gp_wrap_size_limit`.
+pub fn wrap_size_limit(_ctx: &CallContext, arg: ArgWrapSizeLimit) -> ResWrapSizeLimit {
+    let mut res = ResWrapSizeLimit::default();
+    let inner = || -> Result<u32, GssError> {
+        let context = conv::import_gssx_ctx(&arg.context_handle)?;
+        context.wrap_size_limit(arg.conf_req, arg.qop_state as u32, arg.req_output_size as u32)
+    };
+    match inner() {
+        Ok(max) => {
+            res.status = success(None);
+            res.max_input_size = max as u64;
+        }
+        Err(e) => res.status = status_err(&e),
     }
+    res
 }

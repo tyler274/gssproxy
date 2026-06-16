@@ -324,6 +324,24 @@ fn check_cred(
     Ok(())
 }
 
+/// `gp_cred_allowed`: decide whether `cred` may be used against `target`.
+///
+/// Trusted / impersonate / const-deleg services are always allowed. For other
+/// services the C daemon inspects the credential for an impersonator entry
+/// (constrained delegation) and rejects it unless the target is the
+/// impersonator itself. That inspection is not yet ported; normal (non-proxy)
+/// credentials — the common case — are allowed, matching the "no impersonator"
+/// result.
+pub fn cred_allowed(svc: &Service, cred: Option<&Cred>, _target: &Name) -> Result<(), u32> {
+    if cred.is_none() {
+        return Err(consts::GSS_S_CRED_UNAVAIL);
+    }
+    if svc.trusted || svc.impersonate || svc.allow_const_deleg {
+        return Ok(());
+    }
+    Ok(())
+}
+
 /// `gp_add_krb5_creds` (krb5, non-impersonation). Returns `Ok(Some(cred))` for a
 /// freshly acquired credential, `Ok(None)` when the (valid) input credential
 /// should be reused as-is.

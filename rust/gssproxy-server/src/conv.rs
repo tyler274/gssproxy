@@ -3,9 +3,35 @@
 
 use gssapi_sys::seal::CredHandle;
 use gssapi_sys::sys;
-use gssapi_sys::wrap::{self, Cred, Name};
+use gssapi_sys::wrap::{self, Context, Cred, Name};
 use gssapi_sys::{consts, wrap::GssError};
-use gssproxy_proto::gssx::{GssxCred, GssxCredElement, GssxName, GssxStatus, Opaque};
+use gssproxy_proto::gssx::{GssxCred, GssxCredElement, GssxCtx, GssxName, GssxStatus, Opaque};
+
+/// Exported-context representation, mirroring `enum exp_ctx_types` in
+/// `gp_export.c`. The Linux lucid (kernel) form is not yet implemented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpCtxType {
+    Default,
+    Partial,
+    Lucid,
+}
+
+/// `gp_get_exported_context_type`: inspect the `exported_context_type` option.
+pub fn exported_context_type(options: &[gssproxy_proto::gssx::GssxOption]) -> ExpCtxType {
+    // sizeof() in the C macros includes the trailing NUL.
+    const KEY: &[u8] = b"exported_context_type\0";
+    const LUCID: &[u8] = b"linux_lucid_v1\0";
+    for opt in options {
+        if opt.option.as_slice() == KEY {
+            return if opt.value.as_slice() == LUCID {
+                ExpCtxType::Lucid
+            } else {
+                ExpCtxType::Partial
+            };
+        }
+    }
+    ExpCtxType::Default
+}
 
 /// `gssx_cred_usage` enum values (see `x-files/gss_proxy.x`). Note these differ
 /// from the GSS_C_* usage values.
@@ -130,6 +156,72 @@ pub fn import_gssx_cred(handle: &CredHandle, cred: &GssxCred) -> wrap::Result<Op
         Err(_) => return Ok(None),
     };
     Ok(Some(Cred::import_token(&token)?))
+}
+
+/// `gp_export_ctx_id_to_gssx`: serialize a (possibly partial) security context.
+///
+/// Consumes `ctx` (`gss_export_sec_context` invalidates the handle). For
+/// `Partial`, `partial_mech` overrides the inquired mech and the context is
+/// flagged locally-initiated/not-open, matching the C `EXP_CTX_PARTIAL` path.
+/// The `Lucid` (kernel) form is not implemented.
+pub fn export_gssx_ctx(
+    ctx: Context,
+    exp_type: ExpCtxType,
+    partial_mech: Option<&[u8]>,
+) -> wrap::Result<GssxCtx> {
+    let mut out = GssxCtx {
+        needs_release: false,
+        ..Default::default()
+    };
+
+    match ctx.inquire() {
+        Ok(info) => {
+            out.mech = Opaque::new(info.mech);
+            if let Some(n) = &info.src_name {
+                out.src_name = name_to_gssx(n)?;
+            }
+            if let Some(n) = &info.targ_name {
+                out.targ_name = name_to_gssx(n)?;
+            }
+            out.lifetime = info.lifetime as u64;
+            out.ctx_flags = info.flags as u64;
+            out.locally_initiated = info.locally_initiated;
+            out.open = info.open;
+        }
+        Err(e) => {
+            // A partial (continue-needed) context may not inquire; carry on.
+            if exp_type != ExpCtxType::Partial {
+                return Err(e);
+            }
+        }
+    }
+
+    match exp_type {
+        ExpCtxType::Partial => {
+            out.mech = partial_mech.map(|m| Opaque::new(m.to_vec())).unwrap_or_default();
+            out.locally_initiated = true;
+            out.open = false;
+            out.exported_context_token = Opaque::new(ctx.export()?);
+        }
+        ExpCtxType::Default => {
+            out.exported_context_token = Opaque::new(ctx.export()?);
+        }
+        ExpCtxType::Lucid => {
+            return Err(GssError {
+                major: consts::GSS_S_FAILURE,
+                minor: libc::ENOSYS as u32,
+                messages: vec!["linux_lucid_v1 context export is not implemented".to_string()],
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+/// `gp_import_gssx_to_ctx_id` (DEFAULT type): reconstruct a live context from
+/// its exported token.
+pub fn import_gssx_ctx(ctx: &GssxCtx) -> wrap::Result<Context> {
+    Context::import(ctx.exported_context_token.as_slice())
 }
 
 fn seal_error(e: gssapi_sys::seal::SealError) -> GssError {
