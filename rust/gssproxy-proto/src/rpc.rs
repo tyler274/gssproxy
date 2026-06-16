@@ -40,7 +40,7 @@ impl AuthFlavor {
     }
 }
 
-/// `gp_rpc_opaque_auth` — flavour plus up to 400 bytes of body.
+/// `gp_rpc_opaque_auth` - flavour plus up to 400 bytes of body.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpaqueAuth {
     pub flavor: i32,

@@ -6,8 +6,8 @@
 //! Rust / `gssx` values for the interposer (`gssproxy-interposer`) to translate
 //! back into the GSSAPI C ABI.
 //!
-//! Unlike the C client — which threads opaque `gss_OID` "static" pointers and
-//! `gss_buffer_t` out-params throughout — this layer returns owned `gssx`
+//! Unlike the C client - which threads opaque `gss_OID` "static" pointers and
+//! `gss_buffer_t` out-params throughout - this layer returns owned `gssx`
 //! structs and byte vectors. The interposer owns the C-ABI concerns: the
 //! mech-OID static cache (`gpm_mech_to_static`) and name-type static mapping
 //! (`gpm_name_oid_to_static`) live there, since those produce stable pointers

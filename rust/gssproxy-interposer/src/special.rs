@@ -84,7 +84,7 @@ unsafe fn special_equal(s: *const gss_OID_desc, n: *const gss_OID_desc) -> bool 
 /// `gpp_new_special_mech`: build a new special OID for the regular mech bytes
 /// `nb` and append it to the registry, returning the stable special-OID
 /// pointer. The caller must already hold the registry lock so that the
-/// search-then-insert in [`special_mech`] is atomic — see the note there.
+/// search-then-insert in [`special_mech`] is atomic - see the note there.
 fn register_locked(reg: &mut Vec<SpecialEntry>, nb: &[u8]) -> *const gss_OID_desc {
     // SAFETY: the interposer descriptor is a valid 'static OID.
     let prefix = unsafe { oids::oid_bytes(oids::interposer()) }.unwrap_or(&[]);
@@ -103,8 +103,8 @@ fn register_locked(reg: &mut Vec<SpecialEntry>, nb: &[u8]) -> *const gss_OID_des
 /// new one if needed. `GSS_C_NO_OID` (null) returns the first known special
 /// mech, or null if none exist yet.
 ///
-/// Unlike the C `gpp_special_mech` — which walks a lock-free list and may, when
-/// two threads race on the same new mech, append two equivalent entries — we
+/// Unlike the C `gpp_special_mech` - which walks a lock-free list and may, when
+/// two threads race on the same new mech, append two equivalent entries - we
 /// hold the registry lock across the search and the insert so a given mech maps
 /// to exactly one stable special pointer. This is purely internal mechglue
 /// bookkeeping (special OIDs never reach the wire), so the stricter dedup has no
@@ -212,7 +212,7 @@ pub unsafe fn special_available_mechs(
             for i in 0..set.count {
                 let m = set.elements.add(i) as *const gss_OID_desc;
                 // special_mech() returns m unchanged if it is already special, the
-                // existing matching special OID, or a freshly registered one —
+                // existing matching special OID, or a freshly registered one -
                 // exactly the three cases in the C loop.
                 let sp = special_mech(m);
                 if sp.is_null() {
@@ -344,7 +344,7 @@ mod prop_tests {
 
     /// Build a stack `gss_OID_desc` over `bytes` and run `f` with a pointer to
     /// it. The descriptor (and `bytes`) outlive the call, which is all the
-    /// `special.rs` functions require — they copy bytes when registering.
+    /// `special.rs` functions require - they copy bytes when registering.
     fn with_oid<R>(bytes: &[u8], f: impl FnOnce(*const gss_OID_desc) -> R) -> R {
         let desc = gss_OID_desc {
             length: bytes.len() as OM_uint32,

@@ -6,7 +6,7 @@
 //! `xdr_gssx_*` function exactly; this is what guarantees wire compatibility
 //! with the C daemon and the C interposer.
 
-use crate::xdr::{decode_array, encode_array, Xdr, XdrDecoder, XdrEncoder, XdrResult};
+use crate::xdr::{Xdr, XdrDecoder, XdrEncoder, XdrResult, decode_array, encode_array};
 
 /// XDR enum is encoded as a signed 4-byte integer; model gssx enums as i32.
 impl Xdr for i32 {

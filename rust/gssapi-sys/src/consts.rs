@@ -11,7 +11,7 @@
 
 #![allow(non_upper_case_globals)]
 
-use libgssapi_sys::{OM_uint32, GSS_C_CALLING_ERROR_OFFSET, GSS_C_ROUTINE_ERROR_OFFSET};
+use libgssapi_sys::{GSS_C_CALLING_ERROR_OFFSET, GSS_C_ROUTINE_ERROR_OFFSET, OM_uint32};
 
 // bindgen does not expand the computed `GSS_S_*` routine-error macros (only the
 // raw `_GSS_S_*` bases), so we recompute the ones gssproxy synthesizes itself.

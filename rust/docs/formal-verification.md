@@ -90,7 +90,7 @@ exhaustively within the input bounds.
 
 CI: the [`Kani` workflow](../../.github/workflows/kani.yaml) runs
 `cargo kani` via `model-checking/kani-github-action@v1.1` (pinned to Kani
-`0.67.0`) on every push/PR. The job's pass/fail status is the gate — `cargo
+`0.67.0`) on every push/PR. The job's pass/fail status is the gate - `cargo
 kani` exits non-zero if any harness fails to verify.
 
 > Note: SARIF / GitHub Code-Scanning upload is intentionally not wired up yet.
