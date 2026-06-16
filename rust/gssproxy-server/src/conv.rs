@@ -1,9 +1,11 @@
 //! Conversions between the gssx wire types (`gssproxy-proto`) and live GSSAPI
 //! handles/values (`gssapi-sys`). Ported from `src/gp_conv.c`.
 
+use gssapi_sys::seal::CredHandle;
 use gssapi_sys::sys;
-use gssapi_sys::wrap::{self, Name};
-use gssproxy_proto::gssx::{GssxName, GssxStatus, Opaque};
+use gssapi_sys::wrap::{self, Cred, Name};
+use gssapi_sys::{consts, wrap::GssError};
+use gssproxy_proto::gssx::{GssxCred, GssxCredElement, GssxName, GssxStatus, Opaque};
 
 /// `gssx_cred_usage` enum values (see `x-files/gss_proxy.x`). Note these differ
 /// from the GSS_C_* usage values.
@@ -67,6 +69,74 @@ pub fn gssx_to_name(g: &GssxName) -> wrap::Result<Name> {
         Name::import(g.display_name.as_slice(), name_type)
     } else {
         Name::import_exported(g.exported_name.as_slice())
+    }
+}
+
+/// `gp_export_gssx_cred`: serialize a live credential into its wire form,
+/// sealing the opaque `cred_handle_reference` with the per-service key.
+///
+/// Consumes `cred` (the C daemon releases it once serialized, staying
+/// stateless). Mechanisms that fail `inquire_cred_by_mech` are skipped, exactly
+/// like the C "skip any offender" loop.
+pub fn export_gssx_cred(handle: &CredHandle, cred: Cred) -> wrap::Result<GssxCred> {
+    let info = cred.inquire()?;
+
+    let desired_name = match &info.name {
+        Some(n) => name_to_gssx(n)?,
+        None => GssxName::default(),
+    };
+
+    let mut elements = Vec::with_capacity(info.mechs.len());
+    for mech in &info.mechs {
+        let by = match cred.inquire_by_mech(mech) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let mn = match &by.name {
+            Some(n) => name_to_gssx(n)?,
+            None => GssxName::default(),
+        };
+        elements.push(GssxCredElement {
+            mn,
+            mech: Opaque::new(mech.clone()),
+            cred_usage: cred_usage_to_gssx(by.usage),
+            initiator_time_rec: by.initiator_lifetime as u64,
+            acceptor_time_rec: by.acceptor_lifetime as u64,
+            options: Vec::new(),
+        });
+    }
+
+    let token = cred.export_token()?;
+    let sealed = handle.seal(&token).map_err(seal_error)?;
+
+    Ok(GssxCred {
+        desired_name,
+        elements,
+        cred_handle_reference: Opaque::new(sealed),
+        needs_release: false,
+    })
+}
+
+/// `gp_import_gssx_cred`: reconstruct a live credential from its wire form by
+/// unsealing the opaque handle reference. A decrypt failure is treated as "no
+/// credential" (`Ok(None)`), mirroring the C "allow re-issuance" behavior.
+pub fn import_gssx_cred(handle: &CredHandle, cred: &GssxCred) -> wrap::Result<Option<Cred>> {
+    let sealed = cred.cred_handle_reference.as_slice();
+    if sealed.is_empty() {
+        return Ok(None);
+    }
+    let token = match handle.unseal(sealed) {
+        Ok(t) => t,
+        Err(_) => return Ok(None),
+    };
+    Ok(Some(Cred::import_token(&token)?))
+}
+
+fn seal_error(e: gssapi_sys::seal::SealError) -> GssError {
+    GssError {
+        major: consts::GSS_S_FAILURE,
+        minor: 0,
+        messages: vec![format!("cred handle sealing failed: {e}")],
     }
 }
 

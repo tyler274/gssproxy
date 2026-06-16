@@ -3,6 +3,10 @@
 //! service. Mirrors `struct gp_call_ctx` / `gp_creds_match_conn` in
 //! `src/gp_creds.c`.
 
+use std::sync::Arc;
+
+use gssapi_sys::seal::CredHandle;
+
 use crate::config::{Config, Service};
 
 /// Everything a handler needs to know about the connection making a request.
@@ -21,6 +25,9 @@ pub struct CallContext {
     pub program: Option<String>,
     /// The matched service, if any.
     pub service: Option<Service>,
+    /// The per-service sealing handle, populated by the server once a service
+    /// is matched. Used to seal/unseal exported credential handles.
+    pub creds: Option<Arc<CredHandle>>,
 }
 
 impl CallContext {
@@ -43,6 +50,7 @@ impl CallContext {
             socket: socket.to_string(),
             program,
             service,
+            creds: None,
         }
     }
 
@@ -56,6 +64,7 @@ impl CallContext {
             socket: socket.to_string(),
             program: None,
             service: None,
+            creds: None,
         }
     }
 }

@@ -11,6 +11,7 @@
 pub mod call;
 pub mod config;
 pub mod conv;
+pub mod creds;
 pub mod dispatch;
 pub mod handlers;
 pub mod server;

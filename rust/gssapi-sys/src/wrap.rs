@@ -254,6 +254,16 @@ impl Name {
         Ok(out.to_vec())
     }
 
+    /// `gss_compare_name`: whether two names denote the same entity.
+    pub fn compare(&self, other: &Name) -> Result<bool> {
+        let mut equal: c_int = 0;
+        let mut minor: OM_uint32 = 0;
+        let major =
+            unsafe { sys::gss_compare_name(&mut minor, self.0, other.0, &mut equal) };
+        check(major, minor)?;
+        Ok(equal != 0)
+    }
+
     pub fn as_raw(&self) -> gss_name_t {
         self.0
     }
@@ -282,6 +292,23 @@ impl Drop for Name {
     }
 }
 
+/// Result of `gss_inquire_cred`: the cred's overall name, remaining lifetime,
+/// usage, and the mechanisms it covers.
+pub struct CredInfo {
+    pub name: Option<Name>,
+    pub lifetime: OM_uint32,
+    pub usage: c_int,
+    pub mechs: Vec<Vec<u8>>,
+}
+
+/// Result of `gss_inquire_cred_by_mech` for a single mechanism.
+pub struct CredByMech {
+    pub name: Option<Name>,
+    pub initiator_lifetime: OM_uint32,
+    pub acceptor_lifetime: OM_uint32,
+    pub usage: c_int,
+}
+
 /// Owns a `gss_cred_id_t`; releases it on drop.
 pub struct Cred(gss_cred_id_t);
 
@@ -299,6 +326,152 @@ impl Cred {
         std::mem::forget(self);
         p
     }
+
+    /// `gss_inquire_cred`: the credential's name, lifetime, usage and mechs.
+    pub fn inquire(&self) -> Result<CredInfo> {
+        let mut name: gss_name_t = ptr::null_mut();
+        let mut lifetime: OM_uint32 = 0;
+        let mut usage: c_int = 0;
+        let mut set: sys::gss_OID_set = ptr::null_mut();
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe {
+            sys::gss_inquire_cred(
+                &mut minor,
+                self.0,
+                &mut name,
+                &mut lifetime,
+                &mut usage,
+                &mut set,
+            )
+        };
+        check(major, minor)?;
+        let mechs = unsafe { oid_set_drain(&mut set) };
+        Ok(CredInfo {
+            name: if name.is_null() {
+                None
+            } else {
+                Some(Name(name))
+            },
+            lifetime,
+            usage,
+            mechs,
+        })
+    }
+
+    /// `gss_inquire_cred_by_mech`: per-mechanism name/lifetimes/usage.
+    pub fn inquire_by_mech(&self, mech: &[u8]) -> Result<CredByMech> {
+        let mut oid = oid_desc(mech);
+        let mut name: gss_name_t = ptr::null_mut();
+        let mut initiator_lifetime: OM_uint32 = 0;
+        let mut acceptor_lifetime: OM_uint32 = 0;
+        let mut usage: c_int = 0;
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe {
+            sys::gss_inquire_cred_by_mech(
+                &mut minor,
+                self.0,
+                &mut oid,
+                &mut name,
+                &mut initiator_lifetime,
+                &mut acceptor_lifetime,
+                &mut usage,
+            )
+        };
+        check(major, minor)?;
+        Ok(CredByMech {
+            name: if name.is_null() {
+                None
+            } else {
+                Some(Name(name))
+            },
+            initiator_lifetime,
+            acceptor_lifetime,
+            usage,
+        })
+    }
+
+    /// `gss_export_cred`: serialize the credential to an opaque token.
+    pub fn export_token(&self) -> Result<Vec<u8>> {
+        let mut out = OutputBuffer::empty();
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe { sys::gss_export_cred(&mut minor, self.0, out.as_mut_ptr()) };
+        check(major, minor)?;
+        Ok(out.to_vec())
+    }
+
+    /// `gss_import_cred`: reconstruct a credential from an exported token.
+    pub fn import_token(token: &[u8]) -> Result<Cred> {
+        let mut buf = input_buffer(token);
+        let mut out: gss_cred_id_t = ptr::null_mut();
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe { sys::gss_import_cred(&mut minor, &mut buf, &mut out) };
+        check(major, minor)?;
+        Ok(Cred(out))
+    }
+}
+
+/// `gss_acquire_cred_from`: acquire a credential for `name` (or the default
+/// principal when `None`) over the given mechanisms and credential store.
+pub fn acquire_cred_from(
+    name: Option<&Name>,
+    time_req: OM_uint32,
+    mechs: &[&[u8]],
+    usage: c_int,
+    cred_store: &[(String, String)],
+) -> Result<Cred> {
+    // The mech OID set borrows these descs, which borrow the caller's slices.
+    let mut oid_descs: Vec<gss_OID_desc> = mechs.iter().map(|m| oid_desc(m)).collect();
+    let mut mech_set = sys::gss_OID_set_desc {
+        count: oid_descs.len() as _,
+        elements: oid_descs.as_mut_ptr(),
+    };
+
+    // Hold the CStrings alive for the duration of the call; the element descs
+    // borrow their pointers.
+    let cstrings: Vec<(std::ffi::CString, std::ffi::CString)> = cred_store
+        .iter()
+        .map(|(k, v)| {
+            (
+                std::ffi::CString::new(k.as_bytes()).unwrap_or_default(),
+                std::ffi::CString::new(v.as_bytes()).unwrap_or_default(),
+            )
+        })
+        .collect();
+    let mut elements: Vec<sys::gss_key_value_element_desc> = cstrings
+        .iter()
+        .map(|(k, v)| sys::gss_key_value_element_desc {
+            key: k.as_ptr(),
+            value: v.as_ptr(),
+        })
+        .collect();
+    let store = sys::gss_key_value_set_desc {
+        count: elements.len() as _,
+        elements: elements.as_mut_ptr(),
+    };
+    let store_ptr: sys::gss_const_key_value_set_t = if elements.is_empty() {
+        ptr::null()
+    } else {
+        &store
+    };
+
+    let name_raw = name.map(|n| n.0).unwrap_or(ptr::null_mut());
+    let mut out: gss_cred_id_t = ptr::null_mut();
+    let mut minor: OM_uint32 = 0;
+    let major = unsafe {
+        sys::gss_acquire_cred_from(
+            &mut minor,
+            name_raw,
+            time_req,
+            &mut mech_set,
+            usage,
+            store_ptr,
+            &mut out,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    check(major, minor)?;
+    Ok(Cred(out))
 }
 
 impl Drop for Cred {

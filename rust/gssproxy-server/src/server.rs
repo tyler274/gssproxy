@@ -13,6 +13,7 @@ use tokio::net::{UnixListener, UnixStream};
 
 use crate::call::CallContext;
 use crate::config::Config;
+use crate::creds::CredsRegistry;
 use crate::dispatch;
 
 /// Bind `path` and serve connections until an unrecoverable accept error.
@@ -26,13 +27,17 @@ pub async fn run(path: &Path, config: Arc<Mutex<Config>>) -> io::Result<()> {
 
     let socket = path.to_string_lossy().into_owned();
 
+    // Per-service sealing keys, derived lazily and shared for the daemon's
+    // lifetime (a config reload keeps the existing handles, keyed by name).
+    let registry = Arc::new(CredsRegistry::new());
+
     // The test suite waits for this exact substring in the daemon log before it
     // starts driving requests (see `gssproxy_reload` in tests/testlib.py).
     eprintln!("gssproxy: Initialization complete.");
 
     loop {
         let (stream, _addr) = listener.accept().await?;
-        let ctx = resolve_context(&stream, &config, &socket);
+        let ctx = resolve_context(&stream, &config, &registry, &socket);
         tokio::spawn(async move {
             if let Err(e) = handle_conn(stream, ctx).await {
                 eprintln!("gssproxy: connection error: {e}");
@@ -41,9 +46,15 @@ pub async fn run(path: &Path, config: Arc<Mutex<Config>>) -> io::Result<()> {
     }
 }
 
-/// Resolve the per-connection [`CallContext`] from the peer credentials.
-fn resolve_context(stream: &UnixStream, config: &Arc<Mutex<Config>>, socket: &str) -> CallContext {
-    match stream.peer_cred() {
+/// Resolve the per-connection [`CallContext`] from the peer credentials, then
+/// attach the matched service's sealing handle.
+fn resolve_context(
+    stream: &UnixStream,
+    config: &Arc<Mutex<Config>>,
+    registry: &Arc<CredsRegistry>,
+    socket: &str,
+) -> CallContext {
+    let mut ctx = match stream.peer_cred() {
         Ok(cred) => {
             let guard = config.lock().unwrap();
             CallContext::resolve(&guard, socket, cred.uid(), cred.gid(), cred.pid())
@@ -52,7 +63,11 @@ fn resolve_context(stream: &UnixStream, config: &Arc<Mutex<Config>>, socket: &st
             eprintln!("gssproxy: failed to read peer credentials: {e}");
             CallContext::anonymous(socket)
         }
+    };
+    if let Some(svc) = &ctx.service {
+        ctx.creds = registry.get_or_init(svc);
     }
+    ctx
 }
 
 async fn handle_conn(mut stream: UnixStream, ctx: CallContext) -> io::Result<()> {

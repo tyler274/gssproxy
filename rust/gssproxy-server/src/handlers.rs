@@ -6,12 +6,13 @@
 //! shape, `GSS_S_FAILURE` status) until they are ported.
 
 use gssapi_sys::consts;
-use gssapi_sys::wrap::{self, GssError};
+use gssapi_sys::wrap::{self, Cred, GssError};
 use gssproxy_proto::gssx::*;
 use gssproxy_proto::proc::*;
 
 use crate::call::CallContext;
 use crate::conv;
+use crate::creds::{self, AcquireType};
 
 /// The `localname` special option key, matched/emitted exactly as the C daemon
 /// does: `sizeof("localname")` includes the trailing NUL, so the wire key is
@@ -176,13 +177,111 @@ pub fn store_cred(_ctx: &CallContext, _arg: ArgStoreCred) -> ResStoreCred {
     ResStoreCred::default()
 }
 
-// acquire_cred is genuinely implemented in the C daemon; this remains a
-// wire-valid placeholder (GSS_S_FAILURE) until the credential acquisition path
-// is ported.
-pub fn acquire_cred(_ctx: &CallContext, _arg: ArgAcquireCred) -> ResAcquireCred {
+/// `gp_acquire_cred`: acquire a krb5 credential for the matched service.
+///
+/// Only the non-impersonation `ACQ_NORMAL` (and trivial `ACQ_IMPNAME` without
+/// impersonation) paths are supported; impersonating acquisitions return
+/// `GSS_S_FAILURE` from [`creds::add_krb5_creds`].
+pub fn acquire_cred(ctx: &CallContext, arg: ArgAcquireCred) -> ResAcquireCred {
+    let (major, minor, output, mech) = acquire_cred_inner(ctx, &arg);
     ResAcquireCred {
-        status: failure(),
-        ..Default::default()
+        status: conv::status_to_gssx(major, minor, mech.as_deref()),
+        output_cred_handle: output,
+        options: Vec::new(),
+    }
+}
+
+/// `gp_get_acquire_type`: inspect the `acquire_type` option. `None` mirrors the
+/// C `-1` ("invalid") return.
+fn get_acquire_type(arg: &ArgAcquireCred) -> Option<AcquireType> {
+    // sizeof() in the C macros includes the trailing NUL.
+    const KEY: &[u8] = b"acquire_type\0";
+    const IMPERSONATE: &[u8] = b"impersonate_name\0";
+    for opt in &arg.options {
+        if opt.option.as_slice() == KEY {
+            return if opt.value.as_slice() == IMPERSONATE {
+                Some(AcquireType::ImpName)
+            } else {
+                None
+            };
+        }
+    }
+    Some(AcquireType::Normal)
+}
+
+fn acquire_cred_inner(
+    ctx: &CallContext,
+    arg: &ArgAcquireCred,
+) -> (u32, u32, Option<GssxCred>, Option<Vec<u8>>) {
+    let Some(svc) = &ctx.service else {
+        return (consts::GSS_S_FAILURE, EINVAL, None, None);
+    };
+    let Some(handle) = ctx.creds.as_deref() else {
+        return (consts::GSS_S_FAILURE, EINVAL, None, None);
+    };
+
+    let mut in_cred: Option<Cred> = None;
+    let mut acquire_type = AcquireType::Normal;
+    if let Some(ic) = &arg.input_cred_handle {
+        match conv::import_gssx_cred(handle, ic) {
+            Ok(c) => in_cred = c,
+            Err(e) => return (e.major, e.minor, None, None),
+        }
+        match get_acquire_type(arg) {
+            Some(t) => acquire_type = t,
+            None => return (consts::GSS_S_FAILURE, EINVAL, None, None),
+        }
+    }
+
+    // A specified mech list must include an allowed (krb5) mech; otherwise an
+    // empty desired_mechs falls back to the supported set (krb5).
+    if !arg.desired_mechs.is_empty()
+        && !arg
+            .desired_mechs
+            .iter()
+            .any(|m| creds::allowed_mech(svc, m.as_slice()))
+    {
+        return (consts::GSS_S_NO_CRED, 0, None, None);
+    }
+
+    let mech = Some(consts::KRB5_MECH_OID.to_vec());
+    let cred_usage = conv::gssx_to_cred_usage(arg.cred_usage);
+
+    let acquired = match creds::add_krb5_creds(
+        ctx,
+        svc,
+        acquire_type,
+        in_cred.as_ref(),
+        arg.desired_name.as_ref(),
+        cred_usage,
+    ) {
+        Ok(a) => a,
+        Err(e) => return (e.major, e.minor, None, mech),
+    };
+
+    // Reproduce the C pointer dance: when adding to the input handle, or when
+    // no separate cred was acquired, reuse the input handle bytes verbatim.
+    let (reuse_input, final_cred): (bool, Option<Cred>) = if arg.add_cred_to_input_handle {
+        if in_cred.is_some() || acquired.is_some() {
+            (true, None)
+        } else {
+            return (consts::GSS_S_NO_CRED, 0, None, mech);
+        }
+    } else if let Some(c) = acquired {
+        (false, Some(c))
+    } else if in_cred.is_some() {
+        (true, None)
+    } else {
+        return (consts::GSS_S_NO_CRED, 0, None, mech);
+    };
+
+    if reuse_input {
+        return (0, 0, arg.input_cred_handle.clone(), mech);
+    }
+
+    match conv::export_gssx_cred(handle, final_cred.expect("acquired cred")) {
+        Ok(g) => (0, 0, Some(g), mech),
+        Err(e) => (e.major, e.minor, None, mech),
     }
 }
 
