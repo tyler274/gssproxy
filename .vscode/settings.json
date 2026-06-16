@@ -1,0 +1,25 @@
+{
+  // The Rust workspace under ./rust needs the Nix flake dev shell to build:
+  //   - bindgen build scripts (libgssapi-sys, gssapi-sys) need libclang,
+  //     which is only provided in the dev shell via rustPlatform.bindgenHook
+  //     (it exports LIBCLANG_PATH).
+  //   - artifacts in rust/target are built with the flake's pinned rustc, so
+  //     rust-analyzer must use that same toolchain or proc-macro .so files
+  //     fail to load with an ABI mismatch.
+  //
+  // The IDE's bundled rust-analyzer runs with the host environment (rustup
+  // toolchain, no LIBCLANG_PATH), which triggers both failures. Running the
+  // whole server inside `nix develop` (see rust-analyzer-nix.sh) puts the
+  // server, its proc-macro expander, the sysroot, and every cargo invocation
+  // it spawns on one toolchain, without hardcoding store paths that change on
+  // toolchain updates.
+  "rust-analyzer.server.path": "${workspaceFolder}/.vscode/rust-analyzer-nix.sh",
+  "rust-analyzer.cachePriming.numThreads": "physical",
+  // Use the proc-macro expander from the dev shell's rustc sysroot (the same
+  // rustc that builds rust/target), so proc-macro .so files load without an ABI
+  // mismatch. Don't leave this null: that would fall back to rust-analyzer's
+  // built-in expander, which tracks whatever rustc the rust-analyzer package was
+  // built with and may differ from the dev shell's rustc.
+  "rust-analyzer.procMacro.server": "${workspaceFolder}/.vscode/rust-analyzer-proc-macro-srv.sh",
+  "rust-analyzer.restartServerOnConfigChange": true
+}
