@@ -1,0 +1,11 @@
+{
+    "recommendations": [
+        "waderyan.gitblame",
+        "rust-lang.rust-analyzer",
+        "tombi-toml.tombi",
+        "anysphere.remote-containers",
+        "ms-azuretools.vscode-containers",
+        "jnoortheen.nix-ide",
+        "davidanson.vscode-markdownlint"
+    ]
+}
