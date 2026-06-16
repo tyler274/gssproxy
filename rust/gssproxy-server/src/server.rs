@@ -40,10 +40,13 @@ pub async fn run(
     let mut listeners: HashMap<String, JoinHandle<()>> = HashMap::new();
     reconcile_listeners(&main_socket, &config, &registry, &mut listeners);
 
-    // The test suite waits for this exact substring in the daemon log before it
-    // starts driving requests (see `gssproxy_reload` in tests/testlib.py), so
-    // the message text is kept verbatim even though it is now a tracing event.
-    tracing::info!("Initialization complete.");
+    // Readiness signal. The test suite (the Rust `tests/cli.rs` and the upstream
+    // `gssproxy_reload` in tests/testlib.py) waits for this exact substring on
+    // the daemon's stderr/log before it starts driving requests, and an init
+    // system treats it as the "ready" marker. Emit it as a bare, unconditional
+    // stderr line - never through `tracing` - so it is always written verbatim,
+    // independent of the active log filter, ANSI decoration, or subscriber state.
+    eprintln!("Initialization complete.");
 
     let mut hup = match signal(SignalKind::hangup()) {
         Ok(s) => s,
@@ -61,8 +64,10 @@ pub async fn run(
             Ok(cfg) => {
                 *config.lock().unwrap() = cfg;
                 reconcile_listeners(&main_socket, &config, &registry, &mut listeners);
-                // The test suite waits for this exact substring after a SIGHUP.
-                tracing::info!("New config loaded successfully.");
+                // Reload-complete signal: same contract as the readiness line
+                // above (the harness waits for this exact substring after a
+                // SIGHUP), so it is also a bare, unconditional stderr write.
+                eprintln!("New config loaded successfully.");
             }
             Err(e) => tracing::error!(error = %e, "config reload failed"),
         }

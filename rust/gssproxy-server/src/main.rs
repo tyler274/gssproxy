@@ -205,9 +205,13 @@ fn init_tracing(debug: bool, debug_level: i32) {
         ))
     });
 
+    // The daemon logs to stderr (and, under the test harness, into a log file);
+    // neither is an interactive terminal, so suppress ANSI colour codes to keep
+    // the output as plain, greppable text in every environment.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_ansi(false)
         .try_init();
 }
 
