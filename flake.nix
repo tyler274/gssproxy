@@ -43,6 +43,15 @@
           inherit pkgs;
           inherit (pkgs) gssproxy;
         };
+
+        # Same upstream suite, but driven against the Rust daemon (oracle gate
+        # #1): the C-built proxymech.so and test programs talk to the Rust
+        # gssproxy over the wire, proving protocol/ABI compatibility.
+        integration-tests-rust = import ./nix/integration-tests.nix {
+          inherit pkgs;
+          inherit (pkgs) gssproxy;
+          daemon = pkgs.gssproxy-rs;
+        };
       });
 
       devShells = forAllSystems ({ pkgs, ... }: {

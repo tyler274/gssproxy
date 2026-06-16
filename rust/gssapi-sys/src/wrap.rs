@@ -16,6 +16,7 @@ use sys::{
 };
 
 use crate::consts;
+use crate::krb5;
 
 /// A captured GSSAPI status (major/minor) plus the human-readable messages
 /// rendered from `gss_display_status`.
@@ -472,6 +473,31 @@ pub fn acquire_cred_from(
     };
     check(major, minor)?;
     Ok(Cred(out))
+}
+
+/// Destroy a credential cache by name (a port of `safe_free_mem_ccache` in
+/// `gp_creds.c`). Used to tear down the per-request `MEMORY:` ccache the
+/// acquisition layer hands to MIT so that a later acquisition reusing the same
+/// (thread-keyed) ccache name does not observe a stale, mismatched principal
+/// (`KG_CCACHE_NOMATCH`). Best-effort: errors are swallowed, matching the C
+/// daemon's cleanup callback.
+pub fn destroy_ccache(name: &str) {
+    let cname = match std::ffi::CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    unsafe {
+        let mut ctx: krb5::krb5_context = ptr::null_mut();
+        if krb5::krb5_init_context(&mut ctx) != 0 {
+            return;
+        }
+        let mut cc: krb5::krb5_ccache = ptr::null_mut();
+        if krb5::krb5_cc_resolve(ctx, cname.as_ptr(), &mut cc) == 0 {
+            // krb5_cc_destroy also closes the handle.
+            krb5::krb5_cc_destroy(ctx, cc);
+        }
+        krb5::krb5_free_context(ctx);
+    }
 }
 
 impl Drop for Cred {

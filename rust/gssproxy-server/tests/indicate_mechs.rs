@@ -36,16 +36,21 @@ fn unique_socket_path() -> PathBuf {
 /// Start a daemon listener on a fresh socket and return a connected client.
 fn connect_daemon() -> UnixStream {
     let socket = unique_socket_path();
-    let socket_for_server = socket.clone();
+    let socket_for_server = socket.to_string_lossy().into_owned();
     let config = Arc::new(Mutex::new(Config::empty(&socket.to_string_lossy())));
 
-    // Detached listener thread; torn down when the test process exits.
+    // Detached listener thread; torn down when the test process exits. The
+    // config path is never read here (no SIGHUP is sent during the test).
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("build runtime");
-        let _ = rt.block_on(gssproxy_server::server::run(&socket_for_server, config));
+        let _ = rt.block_on(gssproxy_server::server::run(
+            socket_for_server,
+            PathBuf::from("/nonexistent/gssproxy.conf"),
+            config,
+        ));
     });
 
     let deadline = Instant::now() + Duration::from_secs(10);

@@ -103,41 +103,11 @@ fn main() {
     };
 
     let result = runtime.block_on(async move {
-        spawn_reload_handler(shared.clone(), args.config.clone(), args.socket.clone());
-        server::run(Path::new(&args.socket), shared).await
+        server::run(args.socket.clone(), args.config.clone(), shared).await
     });
 
     if let Err(e) = result {
         eprintln!("gssproxy: {e}");
         std::process::exit(1);
     }
-}
-
-/// Reload the configuration on every `SIGHUP`, mirroring the C daemon's
-/// behaviour (including the "New config loaded successfully." log line the test
-/// suite waits for).
-fn spawn_reload_handler(shared: Arc<Mutex<Config>>, config_path: PathBuf, socket: String) {
-    use tokio::signal::unix::{signal, SignalKind};
-
-    let mut hup = match signal(SignalKind::hangup()) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("gssproxy: cannot install SIGHUP handler: {e}");
-            return;
-        }
-    };
-
-    tokio::spawn(async move {
-        while hup.recv().await.is_some() {
-            match Config::parse_file(&config_path, &socket) {
-                Ok(cfg) => {
-                    *shared.lock().unwrap() = cfg;
-                    eprintln!("gssproxy: New config loaded successfully.");
-                }
-                Err(e) => {
-                    eprintln!("gssproxy: config reload failed: {e}");
-                }
-            }
-        }
-    });
 }

@@ -158,6 +158,22 @@ struct CredEnv {
     requested_name: Option<Name>,
     cred_usage: i32,
     cred_store: Vec<(String, String)>,
+    /// Name of the private `MEMORY:` ccache this environment created (if any),
+    /// so the caller can destroy it once the acquired credential is no longer
+    /// needed. Mirrors the C daemon's per-request `destroy_callback`.
+    mem_ccache: Option<String>,
+}
+
+/// RAII guard that destroys a per-request `MEMORY:` credential cache on drop,
+/// mirroring `safe_free_mem_ccache` in `gp_creds.c`. Without this, a later
+/// acquisition reusing the same thread-keyed ccache name would observe a stale
+/// principal and fail with `KG_CCACHE_NOMATCH`.
+pub struct MemCcacheGuard(String);
+
+impl Drop for MemCcacheGuard {
+    fn drop(&mut self) {
+        wrap::destroy_ccache(&self.0);
+    }
 }
 
 /// `gp_get_cred_environment` (krb5 path, impersonation sub-block omitted). On
@@ -226,6 +242,7 @@ fn get_cred_environment(
             requested_name,
             cred_usage: usage,
             cred_store: Vec::new(),
+            mem_ccache: None,
         });
     }
 
@@ -253,6 +270,7 @@ fn get_cred_environment(
                         requested_name,
                         cred_usage: usage,
                         cred_store: store,
+                        mem_ccache: None,
                     });
                 }
                 return Err(libc::EINVAL);
@@ -267,23 +285,31 @@ fn get_cred_environment(
         }
     }
 
-    ensure_segregated_ccache(&mut store, cc_idx);
+    let mem_ccache = ensure_segregated_ccache(&mut store, cc_idx);
 
     Ok(CredEnv {
         requested_name,
         cred_usage: usage,
         cred_store: store,
+        mem_ccache,
     })
 }
 
 /// `ensure_segregated_ccache`: when no ccache was configured, add a private
-/// in-memory one so concurrent acquisitions do not collide.
-fn ensure_segregated_ccache(store: &mut Vec<(String, String)>, cc_idx: Option<usize>) {
+/// in-memory one so concurrent acquisitions do not collide. Returns the ccache
+/// name when one was created, so the caller can destroy it after use (the C
+/// daemon registers a per-request `destroy_callback` for the same reason).
+fn ensure_segregated_ccache(
+    store: &mut Vec<(String, String)>,
+    cc_idx: Option<usize>,
+) -> Option<String> {
     if cc_idx.is_some() {
-        return;
+        return None;
     }
     let tid = unsafe { libc::syscall(libc::SYS_gettid) };
-    store.push(("ccache".to_string(), format!("MEMORY:internal_{tid}")));
+    let name = format!("MEMORY:internal_{tid}");
+    store.push(("ccache".to_string(), name.clone()));
+    Some(name)
 }
 
 /// `gp_check_cred`: validate an input credential. `Ok(())` means reuse it.
@@ -342,9 +368,12 @@ pub fn cred_allowed(svc: &Service, cred: Option<&Cred>, _target: &Name) -> Resul
     Ok(())
 }
 
-/// `gp_add_krb5_creds` (krb5, non-impersonation). Returns `Ok(Some(cred))` for a
-/// freshly acquired credential, `Ok(None)` when the (valid) input credential
-/// should be reused as-is.
+/// `gp_add_krb5_creds` (krb5, non-impersonation). Returns the freshly acquired
+/// credential (or `None` when the valid input credential should be reused
+/// as-is) together with a guard that destroys the private per-request `MEMORY:`
+/// ccache once dropped. The caller must hold the guard until the credential has
+/// finished being used (e.g. through `init`/`accept_sec_context` or the cred
+/// export), then drop it.
 pub fn add_krb5_creds(
     ctx: &CallContext,
     svc: &Service,
@@ -352,7 +381,7 @@ pub fn add_krb5_creds(
     in_cred: Option<&Cred>,
     desired_name: Option<&GssxName>,
     cred_usage: i32,
-) -> Result<Option<Cred>, AcqError> {
+) -> Result<(Option<Cred>, Option<MemCcacheGuard>), AcqError> {
     if try_impersonate(svc, cred_usage, acquire_type) {
         // Impersonation (s4u2self) is not implemented in this port.
         return Err(AcqError::new(consts::GSS_S_FAILURE, libc::ENOSYS as u32));
@@ -361,7 +390,7 @@ pub fn add_krb5_creds(
     if let Some(inc) = in_cred {
         if acquire_type != AcquireType::ImpName {
             match check_cred(svc, inc, desired_name, cred_usage) {
-                Ok(()) => return Ok(None),
+                Ok(()) => return Ok((None, None)),
                 Err(maj)
                     if maj == consts::GSS_S_CREDENTIALS_EXPIRED
                         || maj == consts::GSS_S_NO_CRED
@@ -384,8 +413,13 @@ pub fn add_krb5_creds(
             requested_name,
             cred_usage,
             cred_store: Vec::new(),
+            mem_ccache: None,
         }
     };
+
+    // The private MEMORY ccache (if any) must live until the acquired
+    // credential has finished being used; hand a guard back to the caller.
+    let guard = env.mem_ccache.map(MemCcacheGuard);
 
     let mechs: [&[u8]; 1] = [consts::KRB5_MECH_OID];
     let cred = wrap::acquire_cred_from(
@@ -396,5 +430,5 @@ pub fn add_krb5_creds(
         &env.cred_store,
     )
     .map_err(|e| AcqError::new(e.major, e.minor))?;
-    Ok(Some(cred))
+    Ok((Some(cred), guard))
 }

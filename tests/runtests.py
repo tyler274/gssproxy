@@ -126,5 +126,11 @@ if __name__ == "__main__":
 
     testfiles = [f for f in os.listdir(os.path.dirname(sys.argv[0])) \
                  if f.endswith(".py") and f.startswith("t_")]
+    # GSSPROXY_TEST_SKIP lets a caller exclude specific test files (comma
+    # separated, e.g. "t_impersonate.py"). Used when validating an external
+    # daemon that does not yet implement every feature exercised by the suite.
+    skip = set(filter(None, os.environ.get("GSSPROXY_TEST_SKIP", "").split(",")))
+    if skip:
+        testfiles = [f for f in testfiles if f not in skip]
     testfiles.sort()
     runtests_main(testfiles)

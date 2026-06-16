@@ -286,7 +286,9 @@ fn acquire_cred_inner(
     let mech = Some(consts::KRB5_MECH_OID.to_vec());
     let cred_usage = conv::gssx_to_cred_usage(arg.cred_usage);
 
-    let acquired = match creds::add_krb5_creds(
+    // `_ccache_guard` keeps the per-request MEMORY ccache alive until after the
+    // acquired credential is exported below, then destroys it.
+    let (acquired, _ccache_guard) = match creds::add_krb5_creds(
         ctx,
         svc,
         acquire_type,
@@ -372,14 +374,20 @@ fn init_inner(
 
     let mech = arg.mech_type.as_slice();
 
+    // Keeps the per-request MEMORY ccache alive until init_sec_context (below)
+    // has finished using the freshly acquired credential.
+    let mut _ccache_guard = None;
     if cred.is_none() {
         if mech == consts::KRB5_MECH_OID {
-            cred = creds::add_krb5_creds(ctx, svc, AcquireType::Normal, None, None, GSS_C_INITIATE)
-                .map_err(|e| GssError {
-                    major: e.major,
-                    minor: e.minor,
-                    messages: Vec::new(),
-                })?;
+            let (acquired, guard) =
+                creds::add_krb5_creds(ctx, svc, AcquireType::Normal, None, None, GSS_C_INITIATE)
+                    .map_err(|e| GssError {
+                        major: e.major,
+                        minor: e.minor,
+                        messages: Vec::new(),
+                    })?;
+            cred = acquired;
+            _ccache_guard = guard;
         } else {
             return Err(GssError {
                 major: consts::GSS_S_NO_CRED,
@@ -467,13 +475,17 @@ fn accept_inner(
         None => None,
     };
 
+    let mut _ccache_guard = None;
     if cred.is_none() {
-        cred = creds::add_krb5_creds(ctx, svc, AcquireType::Normal, None, None, GSS_C_ACCEPT)
-            .map_err(|e| GssError {
-                major: e.major,
-                minor: e.minor,
-                messages: Vec::new(),
-            })?;
+        let (acquired, guard) =
+            creds::add_krb5_creds(ctx, svc, AcquireType::Normal, None, None, GSS_C_ACCEPT)
+                .map_err(|e| GssError {
+                    major: e.major,
+                    minor: e.minor,
+                    messages: Vec::new(),
+                })?;
+        cred = acquired;
+        _ccache_guard = guard;
     }
 
     let cb = arg.input_cb.as_ref().map(to_cb);
