@@ -10,6 +10,7 @@ use gssapi_sys::wrap::{self, GssError};
 use gssproxy_proto::gssx::*;
 use gssproxy_proto::proc::*;
 
+use crate::call::CallContext;
 use crate::conv;
 
 /// The `localname` special option key, matched/emitted exactly as the C daemon
@@ -37,7 +38,7 @@ fn find_option<'a>(options: &'a [GssxOption], key: &[u8]) -> Option<&'a GssxOpti
 
 // ---- indicate_mechs (1) ----
 
-pub fn indicate_mechs(_arg: ArgIndicateMechs) -> ResIndicateMechs {
+pub fn indicate_mechs(_ctx: &CallContext, _arg: ArgIndicateMechs) -> ResIndicateMechs {
     let mut res = ResIndicateMechs::default();
     res.status = match build_indicate_mechs(&mut res) {
         Ok(()) => success(None),
@@ -94,7 +95,10 @@ fn build_indicate_mechs(res: &mut ResIndicateMechs) -> wrap::Result<()> {
 
 // ---- import_and_canon_name (3) ----
 
-pub fn import_and_canon_name(arg: ArgImportAndCanonName) -> ResImportAndCanonName {
+pub fn import_and_canon_name(
+    _ctx: &CallContext,
+    arg: ArgImportAndCanonName,
+) -> ResImportAndCanonName {
     let mut res = ResImportAndCanonName::default();
     let mech = if arg.mech.is_empty() {
         None
@@ -150,88 +154,98 @@ fn build_import_and_canon_name(
 // These return the correct result shape with a GSS_S_FAILURE status so the
 // daemon stays wire-valid while the remaining handlers are ported.
 
-pub fn get_call_context(_arg: ArgGetCallContext) -> ResGetCallContext {
+pub fn get_call_context(_ctx: &CallContext, _arg: ArgGetCallContext) -> ResGetCallContext {
     ResGetCallContext {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn export_cred(_arg: ArgExportCred) -> ResExportCred {
+pub fn export_cred(_ctx: &CallContext, _arg: ArgExportCred) -> ResExportCred {
     ResExportCred {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn import_cred(_arg: ArgImportCred) -> ResImportCred {
+pub fn import_cred(_ctx: &CallContext, _arg: ArgImportCred) -> ResImportCred {
     ResImportCred {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn acquire_cred(_arg: ArgAcquireCred) -> ResAcquireCred {
+pub fn acquire_cred(_ctx: &CallContext, _arg: ArgAcquireCred) -> ResAcquireCred {
     ResAcquireCred {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn store_cred(_arg: ArgStoreCred) -> ResStoreCred {
+pub fn store_cred(_ctx: &CallContext, _arg: ArgStoreCred) -> ResStoreCred {
     ResStoreCred {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn init_sec_context(_arg: ArgInitSecContext) -> ResInitSecContext {
+pub fn init_sec_context(_ctx: &CallContext, _arg: ArgInitSecContext) -> ResInitSecContext {
     ResInitSecContext {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn accept_sec_context(_arg: ArgAcceptSecContext) -> ResAcceptSecContext {
+pub fn accept_sec_context(_ctx: &CallContext, _arg: ArgAcceptSecContext) -> ResAcceptSecContext {
     ResAcceptSecContext {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn release_handle(_arg: ArgReleaseHandle) -> ResReleaseHandle {
-    ResReleaseHandle { status: failure() }
+/// The daemon is stateless (every handle is returned with `needs_release =
+/// false`), so a client should never need to release anything. Mirror the C
+/// handler: `GSS_S_UNAVAILABLE` for the known handle types, and
+/// `GSS_S_CALL_BAD_STRUCTURE` for anything else.
+pub fn release_handle(_ctx: &CallContext, arg: ArgReleaseHandle) -> ResReleaseHandle {
+    let major = match arg.cred_handle {
+        GssxHandle::SecCtx(_) | GssxHandle::Cred(_) => consts::GSS_S_UNAVAILABLE,
+        GssxHandle::Extensions { .. } => consts::GSS_S_CALL_BAD_STRUCTURE,
+    };
+    ResReleaseHandle {
+        status: conv::status_to_gssx(major, 0, None),
+    }
 }
 
-pub fn get_mic(_arg: ArgGetMic) -> ResGetMic {
+pub fn get_mic(_ctx: &CallContext, _arg: ArgGetMic) -> ResGetMic {
     ResGetMic {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn verify_mic(_arg: ArgVerifyMic) -> ResVerifyMic {
+pub fn verify_mic(_ctx: &CallContext, _arg: ArgVerifyMic) -> ResVerifyMic {
     ResVerifyMic {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn wrap_msg(_arg: ArgWrap) -> ResWrap {
+pub fn wrap_msg(_ctx: &CallContext, _arg: ArgWrap) -> ResWrap {
     ResWrap {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn unwrap_msg(_arg: ArgUnwrap) -> ResUnwrap {
+pub fn unwrap_msg(_ctx: &CallContext, _arg: ArgUnwrap) -> ResUnwrap {
     ResUnwrap {
         status: failure(),
         ..Default::default()
     }
 }
 
-pub fn wrap_size_limit(_arg: ArgWrapSizeLimit) -> ResWrapSizeLimit {
+pub fn wrap_size_limit(_ctx: &CallContext, _arg: ArgWrapSizeLimit) -> ResWrapSizeLimit {
     ResWrapSizeLimit {
         status: failure(),
         ..Default::default()

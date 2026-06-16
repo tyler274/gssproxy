@@ -11,13 +11,19 @@
 
 #![allow(non_upper_case_globals)]
 
-use libgssapi_sys::{OM_uint32, GSS_C_ROUTINE_ERROR_OFFSET};
+use libgssapi_sys::{OM_uint32, GSS_C_CALLING_ERROR_OFFSET, GSS_C_ROUTINE_ERROR_OFFSET};
 
 // bindgen does not expand the computed `GSS_S_*` routine-error macros (only the
 // raw `_GSS_S_*` bases), so we recompute the ones gssproxy synthesizes itself.
 const fn routine_error(n: OM_uint32) -> OM_uint32 {
     n << GSS_C_ROUTINE_ERROR_OFFSET
 }
+
+const fn calling_error(n: OM_uint32) -> OM_uint32 {
+    n << GSS_C_CALLING_ERROR_OFFSET
+}
+
+pub const GSS_S_CALL_BAD_STRUCTURE: OM_uint32 = calling_error(3);
 
 pub const GSS_S_FAILURE: OM_uint32 = routine_error(13);
 pub const GSS_S_NO_CRED: OM_uint32 = routine_error(7);

@@ -9,6 +9,7 @@ use gssproxy_proto::proc::*;
 use gssproxy_proto::rpc::{Message, MismatchInfo, OpaqueAuth, ReplyBody, GSSPROXY, GSSPROXYVERS};
 use gssproxy_proto::xdr::{Xdr, XdrDecoder, XdrEncoder, XdrResult};
 
+use crate::call::CallContext;
 use crate::handlers;
 
 // RPC accept_stat values (rpc.h).
@@ -18,7 +19,7 @@ const GARBAGE_ARGS: i32 = 4;
 
 /// Process one decoded request body, returning the reply body to frame, or
 /// `None` if the message isn't a well-formed call we should answer.
-pub fn handle_request(body: &[u8]) -> Option<Vec<u8>> {
+pub fn handle_request(ctx: &CallContext, body: &[u8]) -> Option<Vec<u8>> {
     let mut d = XdrDecoder::new(body);
     let msg = Message::decode(&mut d).ok()?;
     if !msg.is_call {
@@ -38,7 +39,7 @@ pub fn handle_request(body: &[u8]) -> Option<Vec<u8>> {
         None => return Some(reply_accept_other(xid, PROC_UNAVAIL)),
     };
 
-    match encode_proc_reply(proc, xid, &mut d) {
+    match encode_proc_reply(ctx, proc, xid, &mut d) {
         Ok(bytes) => Some(bytes),
         // Argument failed to decode: RPC GARBAGE_ARGS.
         Err(_) => Some(reply_accept_other(xid, GARBAGE_ARGS)),
@@ -46,33 +47,42 @@ pub fn handle_request(body: &[u8]) -> Option<Vec<u8>> {
 }
 
 macro_rules! run {
-    ($d:expr, $xid:expr, $arg:ty, $handler:path) => {{
+    ($ctx:expr, $d:expr, $xid:expr, $arg:ty, $handler:path) => {{
         let arg = <$arg as Xdr>::decode($d)?;
-        Ok(gssproxy_proto::encode_reply($xid, &$handler(arg)))
+        Ok(gssproxy_proto::encode_reply($xid, &$handler($ctx, arg)))
     }};
 }
 
-fn encode_proc_reply(proc: GssxProc, xid: u32, d: &mut XdrDecoder) -> XdrResult<Vec<u8>> {
+fn encode_proc_reply(
+    ctx: &CallContext,
+    proc: GssxProc,
+    xid: u32,
+    d: &mut XdrDecoder,
+) -> XdrResult<Vec<u8>> {
     match proc {
-        GssxProc::IndicateMechs => run!(d, xid, ArgIndicateMechs, handlers::indicate_mechs),
-        GssxProc::GetCallContext => run!(d, xid, ArgGetCallContext, handlers::get_call_context),
+        GssxProc::IndicateMechs => run!(ctx, d, xid, ArgIndicateMechs, handlers::indicate_mechs),
+        GssxProc::GetCallContext => {
+            run!(ctx, d, xid, ArgGetCallContext, handlers::get_call_context)
+        }
         GssxProc::ImportAndCanonName => {
-            run!(d, xid, ArgImportAndCanonName, handlers::import_and_canon_name)
+            run!(ctx, d, xid, ArgImportAndCanonName, handlers::import_and_canon_name)
         }
-        GssxProc::ExportCred => run!(d, xid, ArgExportCred, handlers::export_cred),
-        GssxProc::ImportCred => run!(d, xid, ArgImportCred, handlers::import_cred),
-        GssxProc::AcquireCred => run!(d, xid, ArgAcquireCred, handlers::acquire_cred),
-        GssxProc::StoreCred => run!(d, xid, ArgStoreCred, handlers::store_cred),
-        GssxProc::InitSecContext => run!(d, xid, ArgInitSecContext, handlers::init_sec_context),
+        GssxProc::ExportCred => run!(ctx, d, xid, ArgExportCred, handlers::export_cred),
+        GssxProc::ImportCred => run!(ctx, d, xid, ArgImportCred, handlers::import_cred),
+        GssxProc::AcquireCred => run!(ctx, d, xid, ArgAcquireCred, handlers::acquire_cred),
+        GssxProc::StoreCred => run!(ctx, d, xid, ArgStoreCred, handlers::store_cred),
+        GssxProc::InitSecContext => {
+            run!(ctx, d, xid, ArgInitSecContext, handlers::init_sec_context)
+        }
         GssxProc::AcceptSecContext => {
-            run!(d, xid, ArgAcceptSecContext, handlers::accept_sec_context)
+            run!(ctx, d, xid, ArgAcceptSecContext, handlers::accept_sec_context)
         }
-        GssxProc::ReleaseHandle => run!(d, xid, ArgReleaseHandle, handlers::release_handle),
-        GssxProc::GetMic => run!(d, xid, ArgGetMic, handlers::get_mic),
-        GssxProc::VerifyMic => run!(d, xid, ArgVerifyMic, handlers::verify_mic),
-        GssxProc::Wrap => run!(d, xid, ArgWrap, handlers::wrap_msg),
-        GssxProc::Unwrap => run!(d, xid, ArgUnwrap, handlers::unwrap_msg),
-        GssxProc::WrapSizeLimit => run!(d, xid, ArgWrapSizeLimit, handlers::wrap_size_limit),
+        GssxProc::ReleaseHandle => run!(ctx, d, xid, ArgReleaseHandle, handlers::release_handle),
+        GssxProc::GetMic => run!(ctx, d, xid, ArgGetMic, handlers::get_mic),
+        GssxProc::VerifyMic => run!(ctx, d, xid, ArgVerifyMic, handlers::verify_mic),
+        GssxProc::Wrap => run!(ctx, d, xid, ArgWrap, handlers::wrap_msg),
+        GssxProc::Unwrap => run!(ctx, d, xid, ArgUnwrap, handlers::unwrap_msg),
+        GssxProc::WrapSizeLimit => run!(ctx, d, xid, ArgWrapSizeLimit, handlers::wrap_size_limit),
     }
 }
 

@@ -104,7 +104,7 @@ fn main() {
 
     let result = runtime.block_on(async move {
         spawn_reload_handler(shared.clone(), args.config.clone(), args.socket.clone());
-        server::run(Path::new(&args.socket)).await
+        server::run(Path::new(&args.socket), shared).await
     });
 
     if let Err(e) = result {

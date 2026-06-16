@@ -8,6 +8,7 @@
 //!   - [`dispatch`]: RPC envelope validation and per-procedure routing.
 //!   - [`server`]: the Unix-socket listener and SunRPC record-marking loop.
 
+pub mod call;
 pub mod config;
 pub mod conv;
 pub mod dispatch;

@@ -91,6 +91,19 @@ pub struct Config {
 }
 
 impl Config {
+    /// A configuration with no services, listening on `socket_name`. Used as a
+    /// fallback where no config is available (e.g. tests); `match_service`
+    /// always returns `None`.
+    pub fn empty(socket_name: &str) -> Config {
+        Config {
+            socket_name: socket_name.to_string(),
+            num_workers: 0,
+            proxy_user: None,
+            debug_level: 0,
+            services: Vec::new(),
+        }
+    }
+
     /// Load and parse a configuration file, using `socket_name` as the default
     /// socket for services that do not set their own.
     pub fn parse_file(path: &std::path::Path, socket_name: &str) -> Result<Config> {

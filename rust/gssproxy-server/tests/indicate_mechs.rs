@@ -8,7 +8,10 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use gssproxy_server::config::Config;
 
 use gssproxy_proto::frame::{encode_header, parse_header};
 use gssproxy_proto::proc::{GssxProc, ArgIndicateMechs, ResIndicateMechs};
@@ -44,6 +47,9 @@ fn indicate_mechs_round_trips_over_socket() {
     let socket = unique_socket_path();
     let socket_for_server = socket.clone();
 
+    // indicate_mechs needs no service config; an empty config is enough.
+    let config = Arc::new(Mutex::new(Config::empty(&socket.to_string_lossy())));
+
     // Run the listener on its own current-thread runtime. The thread is detached
     // and torn down when the test process exits.
     std::thread::spawn(move || {
@@ -51,7 +57,7 @@ fn indicate_mechs_round_trips_over_socket() {
             .enable_all()
             .build()
             .expect("build runtime");
-        let _ = rt.block_on(gssproxy_server::server::run(&socket_for_server));
+        let _ = rt.block_on(gssproxy_server::server::run(&socket_for_server, config));
     });
 
     // Wait for the socket to accept connections.
