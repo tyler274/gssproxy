@@ -496,6 +496,51 @@ pub fn acquire_cred_from(
     Ok(Cred(out))
 }
 
+/// `gss_store_cred_into`: persist `cred` to a credential store. Mirrors the call
+/// in `extract_ccache` (`GSS_C_BOTH`, default mech, `overwrite` + `default` both
+/// set). When `ccache` is `None` the default ccache is used.
+pub fn store_cred_into(cred: &Cred, ccache: Option<&str>) -> Result<()> {
+    let cstrings: Vec<(std::ffi::CString, std::ffi::CString)> = match ccache {
+        Some(c) => vec![(
+            std::ffi::CString::new("ccache").unwrap_or_default(),
+            std::ffi::CString::new(c).unwrap_or_default(),
+        )],
+        None => Vec::new(),
+    };
+    let mut elements: Vec<sys::gss_key_value_element_desc> = cstrings
+        .iter()
+        .map(|(k, v)| sys::gss_key_value_element_desc {
+            key: k.as_ptr(),
+            value: v.as_ptr(),
+        })
+        .collect();
+    let store = sys::gss_key_value_set_desc {
+        count: elements.len() as _,
+        elements: elements.as_mut_ptr(),
+    };
+    let store_ptr: sys::gss_const_key_value_set_t = if elements.is_empty() {
+        ptr::null()
+    } else {
+        &store
+    };
+
+    let mut minor: OM_uint32 = 0;
+    let major = unsafe {
+        sys::gss_store_cred_into(
+            &mut minor,
+            cred.0,
+            0, // GSS_C_BOTH
+            ptr::null_mut(),
+            1, // overwrite_cred
+            1, // default_cred
+            store_ptr,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    check(major, minor)
+}
+
 /// `gss_acquire_cred_impersonate_name`: obtain, via S4U2Self, a credential for
 /// `desired_name` (the impersonated user) backed by `impersonator`'s ticket.
 /// `mechs` and `usage` mirror the C call; `actual_mechs`/`time_rec` are not

@@ -3,7 +3,9 @@
 //! Mirrors the command-line surface of the C daemon (`src/gssproxy.c`, which
 //! uses popt): `gssproxy [-D|--daemon] [-i|--interactive] [-c|--config FILE]
 //! [-C|--configdir DIR] [-s|--socket PATH] [-u|--userproxy] [-d|--debug]
-//! [--debug-level N] [--syslog-status] [--version] [-h|--help]`.
+//! [--debug-level N] [--syslog-status] [--idle-timeout N] [--version]
+//! [-h|--help]`, plus the hidden `--extract-ccache SRC [--into-ccache DST]`
+//! admin utility (port of `src/extract_ccache.c`).
 //!
 //! It loads `gssproxy.conf`, binds the Unix socket, prints "Initialization
 //! complete." once it is ready to accept connections, and reloads the
@@ -21,7 +23,11 @@ const DEFAULT_SOCKET: &str = "/var/lib/gssproxy/default.sock";
 
 const USAGE: &str = "Usage: gssproxy [-D|--daemon] [-i|--interactive] \
 [-c|--config FILE] [-C|--configdir DIR] [-s|--socket PATH] [-u|--userproxy] \
-[-d|--debug] [--debug-level N] [--syslog-status] [--version] [-h|--help]";
+[-d|--debug] [--debug-level N] [--syslog-status] [--idle-timeout N] \
+[--version] [-h|--help]";
+
+/// Default user-mode idle timeout in seconds (C `opt_idle_timeout`).
+const DEFAULT_IDLE_TIMEOUT: i32 = 1000;
 
 /// Parsed command-line arguments. Several flags are accepted for CLI
 /// compatibility with the C daemon even where the behaviour they toggle is not
@@ -37,6 +43,7 @@ struct Args {
     debug_level: i32,
     syslog_status: bool,
     userproxy: bool,
+    idle_timeout: i32,
 }
 
 impl Args {
@@ -51,17 +58,25 @@ impl Args {
             debug_level: 0,
             syslog_status: false,
             userproxy: false,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
         }
     }
 }
 
 /// Outcome of parsing argv, separated from process side-effects so it is unit
-/// testable.
+/// testable. The ordering of the terminal outcomes mirrors `src/gssproxy.c`:
+/// an unknown option or `--help` short-circuits during the popt parse loop,
+/// while `--version`, `--extract-ccache`, and the `-D`+`-i` conflict are honored
+/// (in that order) only after a fully successful parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Parsed {
     Run(Args),
     Help,
     Version,
+    /// `--extract-ccache SRC [--into-ccache DST]`: run the ccache extractor.
+    ExtractCcache { source: String, dest: Option<String> },
+    /// `-D` and `-i` given together: the C daemon prints a message and exits 0.
+    DaemonInteractiveConflict,
     Error(String),
 }
 
@@ -83,6 +98,13 @@ fn take_value(
 fn parse_args_from<I: IntoIterator<Item = String>>(args: I) -> Parsed {
     let argv: Vec<String> = args.into_iter().collect();
     let mut a = Args::defaults();
+    // popt sets all option flags during the parse loop, then `main` applies the
+    // version/extract/conflict precedence afterwards, so we accumulate rather
+    // than short-circuit on these (unlike `--help`, which popt's autohelp
+    // handles inline).
+    let mut want_version = false;
+    let mut extract_ccache: Option<String> = None;
+    let mut into_ccache: Option<String> = None;
     let mut i = 0;
 
     while i < argv.len() {
@@ -118,11 +140,35 @@ fn parse_args_from<I: IntoIterator<Item = String>>(args: I) -> Parsed {
                 };
             }
             "--syslog-status" => a.syslog_status = true,
-            "--version" => return Parsed::Version,
+            "--idle-timeout" => {
+                a.idle_timeout = match value!().parse() {
+                    Ok(n) => n,
+                    Err(_) => return Parsed::Error("--idle-timeout expects an integer".into()),
+                };
+            }
+            // Hidden admin options (POPT_ARGFLAG_DOC_HIDDEN in the C daemon).
+            "--extract-ccache" => extract_ccache = Some(value!()),
+            "--into-ccache" => into_ccache = Some(value!()),
+            "--version" => want_version = true,
             "-h" | "--help" | "--usage" | "-?" => return Parsed::Help,
             other => return Parsed::Error(format!("unknown option '{other}'")),
         }
         i += 1;
+    }
+
+    // Terminal-outcome precedence, mirroring src/gssproxy.c: version first, then
+    // the (hidden) ccache extractor, then the daemon/interactive conflict.
+    if want_version {
+        return Parsed::Version;
+    }
+    if let Some(source) = extract_ccache {
+        return Parsed::ExtractCcache {
+            source,
+            dest: into_ccache,
+        };
+    }
+    if a.daemon && a.interactive {
+        return Parsed::DaemonInteractiveConflict;
     }
 
     Parsed::Run(a)
@@ -140,7 +186,7 @@ fn load_config(path: &Path, socket: &str) -> Config {
 
 fn run(args: Args) {
     let _ = (args.interactive, args.daemon, args.debug, args.debug_level,
-             args.syslog_status, args.userproxy, &args.config_dir);
+             args.syslog_status, args.userproxy, &args.config_dir, args.idle_timeout);
     // Daemonization, debug toggling, and userproxy mode are not implemented;
     // the daemon always runs in the foreground.
 
@@ -175,7 +221,23 @@ fn main() {
             std::process::exit(0);
         }
         Parsed::Version => {
-            println!("gssproxy {} (rust)", env!("CARGO_PKG_VERSION"));
+            // Bare version string, matching the C daemon's `puts(VERSION)`.
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        Parsed::ExtractCcache { source, dest } => {
+            match gssproxy_server::extract::extract_ccache(&source, dest.as_deref()) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("gssproxy: extract-ccache failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Parsed::DaemonInteractiveConflict => {
+            // The C daemon prints this to stderr and exits 0.
+            eprintln!("Option -i|--interactive is not allowed together with -D|--daemon");
+            eprintln!("{USAGE}");
             std::process::exit(0);
         }
         Parsed::Error(msg) => {
@@ -268,6 +330,55 @@ mod tests {
         assert!(matches!(parse(&["--config"]), Parsed::Error(_)));
         assert!(matches!(parse(&["--debug-level", "notanint"]), Parsed::Error(_)));
     }
+
+    #[test]
+    fn idle_timeout_parses_like_c() {
+        assert_eq!(run_args(&[]).idle_timeout, DEFAULT_IDLE_TIMEOUT);
+        assert_eq!(run_args(&["--idle-timeout", "42"]).idle_timeout, 42);
+        assert_eq!(run_args(&["--idle-timeout=7"]).idle_timeout, 7);
+        assert!(matches!(parse(&["--idle-timeout", "x"]), Parsed::Error(_)));
+        assert!(matches!(parse(&["--idle-timeout"]), Parsed::Error(_)));
+    }
+
+    #[test]
+    fn extract_ccache_options() {
+        assert_eq!(
+            parse(&["--extract-ccache", "FILE:/tmp/cc"]),
+            Parsed::ExtractCcache { source: "FILE:/tmp/cc".into(), dest: None }
+        );
+        assert_eq!(
+            parse(&["--extract-ccache=FILE:/a", "--into-ccache=FILE:/b"]),
+            Parsed::ExtractCcache {
+                source: "FILE:/a".into(),
+                dest: Some("FILE:/b".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn daemon_interactive_conflict_matches_c() {
+        // C prints a message and exits 0 when -D and -i are combined.
+        assert_eq!(parse(&["-D", "-i"]), Parsed::DaemonInteractiveConflict);
+        assert_eq!(parse(&["--daemon", "--interactive"]), Parsed::DaemonInteractiveConflict);
+        // Either alone is fine.
+        assert!(matches!(parse(&["-D"]), Parsed::Run(_)));
+        assert!(matches!(parse(&["-i"]), Parsed::Run(_)));
+    }
+
+    #[test]
+    fn version_precedence_matches_popt() {
+        // popt parses the whole argv before honoring --version, so an unknown
+        // option anywhere still errors (it does not short-circuit on version).
+        assert_eq!(parse(&["--version"]), Parsed::Version);
+        assert_eq!(parse(&["-D", "--version"]), Parsed::Version);
+        assert!(matches!(parse(&["--version", "--bogus"]), Parsed::Error(_)));
+        // version wins over the -D/-i conflict and over extract-ccache.
+        assert_eq!(parse(&["-D", "-i", "--version"]), Parsed::Version);
+        assert_eq!(
+            parse(&["--version", "--extract-ccache", "FILE:/x"]),
+            Parsed::Version
+        );
+    }
 }
 
 #[cfg(test)]
@@ -333,15 +444,24 @@ mod prop_tests {
         }
 
         /// Any sequence of value-less known flags parses to `Run`, with each
-        /// boolean set iff its flag (short or long) is present.
+        /// boolean set iff its flag (short or long) is present — except that
+        /// `-D` and `-i` together trigger the daemon/interactive conflict.
         #[test]
         fn known_flags_only_always_run(flags in prop::collection::vec(known_flag(), 0..8)) {
             let argv: Vec<String> = flags.iter().map(|s| s.to_string()).collect();
+            let has = |s: &str, l: &str| flags.iter().any(|f| *f == s || *f == l);
+            let interactive = has("-i", "--interactive");
+            let daemon = has("-D", "--daemon");
             match parse_args_from(argv) {
+                _ if interactive && daemon => {
+                    prop_assert_eq!(
+                        parse_args_from(flags.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+                        Parsed::DaemonInteractiveConflict
+                    );
+                }
                 Parsed::Run(a) => {
-                    let has = |s: &str, l: &str| flags.iter().any(|f| *f == s || *f == l);
-                    prop_assert_eq!(a.interactive, has("-i", "--interactive"));
-                    prop_assert_eq!(a.daemon, has("-D", "--daemon"));
+                    prop_assert_eq!(a.interactive, interactive);
+                    prop_assert_eq!(a.daemon, daemon);
                     prop_assert_eq!(a.userproxy, has("-u", "--userproxy"));
                     prop_assert_eq!(a.debug, has("-d", "--debug"));
                     prop_assert_eq!(a.syslog_status, flags.iter().any(|f| *f == "--syslog-status"));
@@ -350,8 +470,10 @@ mod prop_tests {
             }
         }
 
-        /// A terminal token in first position short-circuits regardless of what
-        /// follows.
+        /// `--help` short-circuits inline (popt autohelp) and an unknown leading
+        /// token errors, regardless of what follows. `--version`, by contrast,
+        /// is only honored after a fully successful parse, so it does NOT
+        /// short-circuit past a later bad option.
         #[test]
         fn leading_token_decides_outcome(rest in prop::collection::vec(token(), 0..6)) {
             let with = |head: &str| {
@@ -359,7 +481,6 @@ mod prop_tests {
                 v.extend(rest.iter().cloned());
                 parse_args_from(v)
             };
-            prop_assert_eq!(with("--version"), Parsed::Version);
             prop_assert_eq!(with("-h"), Parsed::Help);
             prop_assert!(matches!(with("--definitely-not-a-flag"), Parsed::Error(_)));
         }
