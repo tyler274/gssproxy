@@ -36,6 +36,7 @@ pub const GSS_S_DEFECTIVE_TOKEN: OM_uint32 = routine_error(9);
 pub const GSS_S_BAD_MECH: OM_uint32 = routine_error(1);
 pub const GSS_S_UNAVAILABLE: OM_uint32 = routine_error(16);
 pub const GSS_S_NAME_NOT_MN: OM_uint32 = routine_error(18);
+pub const GSS_S_UNAUTHORIZED: OM_uint32 = routine_error(15);
 
 /// The krb5 mechanism OID: 1.2.840.113554.1.2.2
 pub const KRB5_MECH_OID: &[u8] = &[
@@ -84,4 +85,13 @@ pub const NT_STRING_UID_NAME_OID: &[u8] = &[
 /// `GSS_KRB5_NT_PRINCIPAL_NAME` OID: 1.2.840.113554.1.2.2.1
 pub const KRB5_NT_PRINCIPAL_NAME_OID: &[u8] = &[
     0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02, 0x01,
+];
+
+/// `GSS_KRB5_GET_CRED_IMPERSONATOR` OID: 1.2.840.113554.1.2.2.5.14.
+///
+/// Passed to `gss_inquire_cred_by_oid` to retrieve the principal that
+/// impersonated the credential (constrained-delegation marker), matching the
+/// hard-coded `impersonator_oid` fallback in `gp_creds.c`.
+pub const KRB5_GET_CRED_IMPERSONATOR_OID: &[u8] = &[
+    0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02, 0x05, 0x0e,
 ];

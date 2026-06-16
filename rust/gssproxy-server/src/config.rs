@@ -584,3 +584,175 @@ mod tests {
         assert!(matches!(err, ConfigError::Invalid(_)));
     }
 }
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    const SOCK: &str = GP_SOCKET_NAME;
+
+    /// Random INI-ish text built from a vocabulary of real gssproxy config
+    /// lines plus arbitrary printable noise. Heavily weighted toward valid
+    /// lines so the parser's success paths are exercised, not just rejection.
+    fn config_text() -> impl Strategy<Value = String> {
+        let line = prop_oneof![
+            Just("[gssproxy]".to_string()),
+            Just("[service/x]".to_string()),
+            Just("[service/y]".to_string()),
+            Just("debug = true".to_string()),
+            Just("debug_level = 3".to_string()),
+            Just("euid = 0".to_string()),
+            Just("euid = 1000".to_string()),
+            Just("euid = notanumber".to_string()),
+            Just("mechs = krb5".to_string()),
+            Just("mechs = bogus".to_string()),
+            Just("mechs =".to_string()),
+            Just("cred_usage = initiate".to_string()),
+            Just("cred_usage = accept".to_string()),
+            Just("cred_usage = bogus".to_string()),
+            Just("filter_flags = +DELEGATE -MUTUAL_AUTH 0x10".to_string()),
+            Just("enforce_flags = +CONFIDENTIALITY".to_string()),
+            Just("program = /usr/sbin/x".to_string()),
+            Just("program = rel|ative".to_string()),
+            Just("program = relative/path".to_string()),
+            Just("socket = /run/x.sock".to_string()),
+            Just("cred_store = keytab:/etc/krb5.keytab".to_string()),
+            Just("cred_store = nocolon".to_string()),
+            Just("allow_any_uid = yes".to_string()),
+            Just("trusted = yes".to_string()),
+            Just("min_lifetime = 42".to_string()),
+            Just("krb5_keytab = /deprecated".to_string()),
+            Just(String::new()),
+            "[ -~]{0,24}".prop_map(|s| s),
+        ];
+        prop::collection::vec(line, 0..28).prop_map(|lines| lines.join("\n"))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 512,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        })]
+
+        /// Parsing arbitrary text never panics, is deterministic, and any Ok
+        /// config satisfies every structural guarantee the C loader enforces.
+        #[test]
+        fn parse_never_panics_and_holds_invariants(text in config_text()) {
+            let a = Config::parse_str(&text, SOCK);
+            let b = Config::parse_str(&text, SOCK);
+            prop_assert!(a == b, "parse is not deterministic");
+
+            if let Ok(cfg) = &a {
+                prop_assert!(!cfg.services.is_empty(), "Ok config must have services");
+                for svc in &cfg.services {
+                    // Only krb5 is supported; a service with no usable mech is
+                    // dropped, so every surviving service has the krb5 bit.
+                    prop_assert_eq!(svc.mechs, GP_CRED_KRB5);
+                    prop_assert!(
+                        [GSS_C_BOTH, GSS_C_INITIATE, GSS_C_ACCEPT].contains(&svc.cred_usage)
+                    );
+                    if let Some(p) = &svc.program {
+                        prop_assert!(p.starts_with('/'), "program path must be absolute");
+                        prop_assert!(!p.contains('|'), "program path must not contain '|'");
+                    }
+                    // A kept service always matches a connection bearing its own
+                    // (euid, socket, program) coordinates.
+                    let eff = svc.socket.clone().unwrap_or_else(|| cfg.socket_name.clone());
+                    let m = cfg.match_service(svc.euid, &eff, svc.program.as_deref());
+                    prop_assert!(m.is_some(), "service must match its own coordinates");
+                    let chosen = m.unwrap();
+                    prop_assert!(chosen.any_uid || chosen.euid == svc.euid);
+                }
+            }
+        }
+    }
+
+    // ---- match_service property (independent of the parser) -----------------
+
+    fn arb_service() -> impl Strategy<Value = Service> {
+        (
+            any::<u32>(),
+            any::<bool>(),
+            prop::option::of("/[a-z]{1,6}"),
+            prop::option::of("[a-z]{1,6}"),
+            prop::option::of("[a-z]{1,6}"),
+        )
+            .prop_map(|(euid, any_uid, program, socket, selinux_context)| Service {
+                name: "s".to_string(),
+                euid,
+                any_uid,
+                allow_proto_trans: false,
+                allow_const_deleg: false,
+                allow_cc_sync: false,
+                trusted: false,
+                kernel_nfsd: false,
+                impersonate: false,
+                socket,
+                selinux_context,
+                cred_usage: GSS_C_BOTH,
+                filter_flags: 0,
+                enforce_flags: 0,
+                min_lifetime: DEFAULT_MIN_LIFETIME,
+                program,
+                mechs: GP_CRED_KRB5,
+                krb5_principal: None,
+                krb5_store: Vec::new(),
+            })
+    }
+
+    fn arb_config() -> impl Strategy<Value = Config> {
+        ("/[a-z]{1,6}", prop::collection::vec(arb_service(), 0..5)).prop_map(
+            |(socket_name, services)| Config {
+                socket_name,
+                num_workers: 0,
+                proxy_user: None,
+                debug_level: 0,
+                services,
+            },
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 512,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        })]
+
+        /// `match_service` is exactly "first service satisfying the euid/program/
+        /// socket predicate", never panics, and the chosen service really
+        /// matches the query.
+        #[test]
+        fn match_service_is_first_match(
+            cfg in arb_config(),
+            uid in any::<u32>(),
+            socket in "[a-z/]{1,8}",
+            program in prop::option::of("[a-z]{1,6}"),
+        ) {
+            let pred = |svc: &Service| -> bool {
+                if !svc.any_uid && svc.euid != uid {
+                    return false;
+                }
+                if let Some(p) = &svc.program {
+                    if program.as_deref() != Some(p.as_str()) {
+                        return false;
+                    }
+                }
+                match &svc.socket {
+                    Some(s) => socket == *s,
+                    None => socket == cfg.socket_name,
+                }
+            };
+
+            let got = cfg.match_service(uid, &socket, program.as_deref());
+            let expected = cfg.services.iter().find(|s| pred(s));
+            prop_assert_eq!(got, expected);
+
+            if let Some(svc) = got {
+                prop_assert!(pred(svc), "returned service must satisfy the match predicate");
+            }
+        }
+    }
+}

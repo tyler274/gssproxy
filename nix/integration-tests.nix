@@ -67,11 +67,6 @@ in
     # Drive the suite against the external (Rust) daemon. The C-built
     # proxymech.so and test programs are still used unchanged.
     export GSSPROXY_TEST_DAEMON="${externalDaemon}/bin/gssproxy"
-
-    # The Rust daemon does not yet implement s4u2self impersonation
-    # (constrained delegation); skip that file so the gate validates the
-    # implemented surface. Everything else runs unchanged.
-    export GSSPROXY_TEST_SKIP="t_impersonate.py"
   '';
 
   # When validating the external daemon, surface the daemon log and krb5 trace

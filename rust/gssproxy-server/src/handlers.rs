@@ -218,9 +218,8 @@ pub fn store_cred(_ctx: &CallContext, _arg: ArgStoreCred) -> ResStoreCred {
 
 /// `gp_acquire_cred`: acquire a krb5 credential for the matched service.
 ///
-/// Only the non-impersonation `ACQ_NORMAL` (and trivial `ACQ_IMPNAME` without
-/// impersonation) paths are supported; impersonating acquisitions return
-/// `GSS_S_FAILURE` from [`creds::add_krb5_creds`].
+/// Both the normal (`ACQ_NORMAL`) and impersonating (`ACQ_IMPNAME` / s4u2self)
+/// paths are handled by [`creds::add_krb5_creds`].
 pub fn acquire_cred(ctx: &CallContext, arg: ArgAcquireCred) -> ResAcquireCred {
     let (major, minor, output, mech) = acquire_cred_inner(ctx, &arg);
     ResAcquireCred {

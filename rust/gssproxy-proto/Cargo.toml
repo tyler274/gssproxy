@@ -10,3 +10,6 @@ description = "Byte-exact XDR/SunRPC codec for the gssproxy (gssx) wire protocol
 name = "gssproxy_proto"
 
 [dependencies]
+
+[dev-dependencies]
+proptest = "1.11.0"

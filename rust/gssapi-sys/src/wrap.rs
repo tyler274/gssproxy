@@ -391,6 +391,27 @@ impl Cred {
         })
     }
 
+    /// `gss_inquire_cred_by_oid`: return the data buffers a mechanism associates
+    /// with `oid` for this credential. Used with
+    /// [`consts::KRB5_GET_CRED_IMPERSONATOR_OID`] to detect constrained-delegation
+    /// (proxy) credentials. A `GSS_S_UNAVAILABLE` major (the SPI/OID is not
+    /// supported by the installed mechanism) is reported as an empty result; the
+    /// C daemon's raw-krb5 `proxy_impersonator` ccache fallback is not ported,
+    /// since modern MIT krb5 supports this SPI directly.
+    pub fn inquire_by_oid(&self, oid: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let mut desired = oid_desc(oid);
+        let mut set: sys::gss_buffer_set_t = ptr::null_mut();
+        let mut minor: OM_uint32 = 0;
+        let major = unsafe {
+            sys::gss_inquire_cred_by_oid(&mut minor, self.0, &mut desired, &mut set)
+        };
+        if major == consts::GSS_S_UNAVAILABLE {
+            return Ok(Vec::new());
+        }
+        check(major, minor)?;
+        Ok(unsafe { buffer_set_drain(&mut set) })
+    }
+
     /// `gss_export_cred`: serialize the credential to an opaque token.
     pub fn export_token(&self) -> Result<Vec<u8>> {
         let mut out = OutputBuffer::empty();
@@ -466,6 +487,42 @@ pub fn acquire_cred_from(
             &mut mech_set,
             usage,
             store_ptr,
+            &mut out,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    check(major, minor)?;
+    Ok(Cred(out))
+}
+
+/// `gss_acquire_cred_impersonate_name`: obtain, via S4U2Self, a credential for
+/// `desired_name` (the impersonated user) backed by `impersonator`'s ticket.
+/// `mechs` and `usage` mirror the C call; `actual_mechs`/`time_rec` are not
+/// surfaced (the daemon does not use them on this path).
+pub fn acquire_cred_impersonate_name(
+    impersonator: &Cred,
+    desired_name: Option<&Name>,
+    time_req: OM_uint32,
+    mechs: &[&[u8]],
+    usage: c_int,
+) -> Result<Cred> {
+    let mut oid_descs: Vec<gss_OID_desc> = mechs.iter().map(|m| oid_desc(m)).collect();
+    let mut mech_set = sys::gss_OID_set_desc {
+        count: oid_descs.len() as _,
+        elements: oid_descs.as_mut_ptr(),
+    };
+    let name_raw = desired_name.map(|n| n.0).unwrap_or(ptr::null_mut());
+    let mut out: gss_cred_id_t = ptr::null_mut();
+    let mut minor: OM_uint32 = 0;
+    let major = unsafe {
+        sys::gss_acquire_cred_impersonate_name(
+            &mut minor,
+            impersonator.0,
+            name_raw,
+            time_req,
+            &mut mech_set,
+            usage,
             &mut out,
             ptr::null_mut(),
             ptr::null_mut(),
@@ -894,6 +951,26 @@ unsafe fn oid_set_drain(set: &mut sys::gss_OID_set) -> Vec<Vec<u8>> {
         }
         let mut minor: OM_uint32 = 0;
         sys::gss_release_oid_set(&mut minor, set);
+    }
+    out
+}
+
+/// Drain a `gss_buffer_set` into owned byte vectors and release the set.
+unsafe fn buffer_set_drain(set: &mut sys::gss_buffer_set_t) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    if !set.is_null() {
+        let count = (**set).count as usize;
+        for i in 0..count {
+            let elem = (**set).elements.add(i);
+            let bytes = if (*elem).value.is_null() || (*elem).length == 0 {
+                Vec::new()
+            } else {
+                slice::from_raw_parts((*elem).value as *const u8, (*elem).length as usize).to_vec()
+            };
+            out.push(bytes);
+        }
+        let mut minor: OM_uint32 = 0;
+        sys::gss_release_buffer_set(&mut minor, set);
     }
     out
 }

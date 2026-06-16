@@ -52,6 +52,20 @@
           inherit (pkgs) gssproxy;
           daemon = pkgs.gssproxy-rs;
         };
+
+        # CLI behaviour parity between the C and Rust gssproxy binaries
+        # (--version/--help/unknown-option/missing-config).
+        cli-parity = import ./nix/cli-tests.nix {
+          inherit pkgs;
+          inherit (pkgs) gssproxy gssproxy-rs;
+        };
+
+        # Interposer ABI parity: the Rust proxymech.so's exported
+        # gss_mech_interposer/gssi_* surface must be a subset of the C plugin's.
+        interposer-symbol-parity = import ./nix/interposer-symbols.nix {
+          inherit pkgs;
+          inherit (pkgs) gssproxy gssproxy-rs;
+        };
       });
 
       devShells = forAllSystems ({ pkgs, ... }: {
@@ -70,7 +84,15 @@
             rustfmt
             pkg-config
             krb5
+            # Supplies libclang/LIBCLANG_PATH so libgssapi-sys's bindgen build
+            # script works in the dev shell, matching nix/rust.nix.
+            rustPlatform.bindgenHook
           ];
+          # The committed .cargo/config.toml disables rustup's self-contained
+          # lld for the non-Nix host, but Nixpkgs' rustc rejects that flag, so
+          # neutralise the override inside the dev shell. (cargo uses RUSTFLAGS
+          # in preference to target.*.rustflags from the config file.)
+          RUSTFLAGS = " ";
         };
       });
 

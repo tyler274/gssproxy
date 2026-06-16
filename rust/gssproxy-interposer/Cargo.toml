@@ -15,3 +15,6 @@ gssproxy-proto.workspace = true
 gssproxy-client.workspace = true
 gssapi-sys.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"
