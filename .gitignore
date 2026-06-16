@@ -88,6 +88,9 @@ rust/target
 # Contains mutation testing data
 **/mutants.out*/
 
+# Project-local Kani toolchain/cargo/CBMC state created by `nix run .#kani`
+.kani/
+
 # rustc will dump stack traces when hitting an internal compiler error to PWD
 rustc-ice-*.txt
 

@@ -20,3 +20,10 @@ gssproxy-proto = { path = "gssproxy-proto" }
 gssapi-sys = { path = "gssapi-sys" }
 gssproxy-client = { path = "gssproxy-client" }
 libc = "0.2"
+
+# `kani` is a custom cfg injected by `cargo kani` (--cfg kani). Declare it so the
+# `unexpected_cfgs` lint (denied via clippy -D warnings) doesn't fire on the
+# `#[cfg(kani)]` verification modules during normal builds. Crates that use it
+# opt in with `[lints] workspace = true`.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

@@ -10,6 +10,9 @@ description = "proxymech.so: a GSSAPI mechanism interposer plugin that proxies t
 name = "proxymech"
 crate-type = ["cdylib"]
 
+[lints]
+workspace = true
+
 [dependencies]
 gssproxy-proto.workspace = true
 gssproxy-client.workspace = true

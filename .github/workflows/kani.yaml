@@ -1,0 +1,58 @@
+name: Kani
+
+# Bounded model checking of the FFI-free, security-critical Rust logic: the
+# gssx wire codec (gssproxy-proto) and the pure OID helpers in the interposer.
+# These proofs upgrade the proptest fuzzers to exhaustive guarantees over
+# bounded inputs. See rust/docs/formal-verification.md.
+#
+# This is intentionally separate from the Nix workflow and from `nix flake
+# check`: Kani is not packaged in nixpkgs (nightly toolchain + downloads CBMC),
+# so CI uses the official Kani GitHub Action and developers use `nix run .#kani`.
+#
+# The job's pass/fail status is the gate: `cargo kani` exits non-zero if any
+# harness fails to verify. (SARIF/Code-Scanning upload is intentionally not used
+# yet: `--sarif` is not available in released Kani 0.67.0, only on unreleased
+# main. Re-add `--sarif` + github/codeql-action/upload-sarif once it ships.)
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  proto:
+    name: Kani proofs (gssproxy-proto codec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run Kani on gssproxy-proto
+        uses: model-checking/kani-github-action@v1.1
+        with:
+          kani-version: "0.67.0"
+          working-directory: rust
+          args: >-
+            -p gssproxy-proto
+            --output-format=terse
+
+  interposer:
+    name: Kani proofs (interposer OID helpers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # gssproxy-interposer depends on gssapi-sys, whose build.rs runs bindgen
+      # against the krb5/gssapi headers (the OID harnesses don't call any FFI,
+      # but the crate must still compile).
+      - name: Install krb5/clang build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libkrb5-dev libclang-dev clang pkg-config
+      - name: Run Kani on gssproxy-interposer OID helpers
+        uses: model-checking/kani-github-action@v1.1
+        with:
+          kani-version: "0.67.0"
+          working-directory: rust
+          args: >-
+            -p gssproxy-interposer
+            --output-format=terse

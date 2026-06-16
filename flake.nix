@@ -110,7 +110,23 @@
           inherit (rustChecks) rust-fmt clippy rust-tests;
         });
 
+      apps = forAllSystems ({ pkgs, ... }:
+        let kani = import ./nix/kani.nix { inherit pkgs; };
+        in {
+          # Bounded Kani proofs for the FFI-free codec/helpers, run in an FHS
+          # sandbox (Kani isn't packaged in nixpkgs). Not a flake check.
+          #   nix run .#kani -- -p gssproxy-proto
+          kani = {
+            type = "app";
+            program = "${kani.app}/bin/gssproxy-kani";
+          };
+        });
+
       devShells = forAllSystems ({ pkgs, ... }: {
+        # Interactive FHS shell for running Kani locally: `nix develop .#kani`,
+        # then `cargo kani -p gssproxy-proto`.
+        kani = (import ./nix/kani.nix { inherit pkgs; }).shell.env;
+
         default = pkgs.mkShell {
           inputsFrom = [ pkgs.gssproxy ];
           packages = with pkgs; [

@@ -454,7 +454,7 @@ mod prop_tests {
             ..ProptestConfig::default()
         })]
 
-        /// No argv — however malformed — makes the parser panic, and parsing is
+        /// No argv - however malformed - makes the parser panic, and parsing is
         /// deterministic.
         #[test]
         fn parse_never_panics_and_is_deterministic(argv in prop::collection::vec(token(), 0..10)) {
@@ -464,7 +464,7 @@ mod prop_tests {
         }
 
         /// Any sequence of value-less known flags parses to `Run`, with each
-        /// boolean set iff its flag (short or long) is present — except that
+        /// boolean set iff its flag (short or long) is present - except that
         /// `-D` and `-i` together trigger the daemon/interactive conflict.
         #[test]
         fn known_flags_only_always_run(flags in prop::collection::vec(known_flag(), 0..8)) {

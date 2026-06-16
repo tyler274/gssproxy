@@ -244,3 +244,68 @@ mod prop_tests {
         oid_bytes(oid).unwrap_or(&[])
     }
 }
+
+/// Kani bounded-model-checking harnesses. These prove the same invariants the
+/// `prop_tests` sample, but exhaustively over all inputs within the bound.
+/// They are FFI-free (no `gss_*`/`krb5_*` is reachable) so CBMC can model them.
+/// Gated on `#[cfg(kani)]`, compiled only under `cargo kani`. See
+/// `rust/docs/formal-verification.md`.
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// The known krb5/iakerb mech OIDs (max length 9), so a 9-byte arbitrary
+    /// array + arbitrary length covers every one of them by prefix.
+    const KNOWN_KRB5: [&[u8]; 4] = [KRB5, KRB5_OLD, KRB5_WRONG, IAKERB];
+
+    fn make_desc(bytes: &[u8]) -> gss_OID_desc {
+        gss_OID_desc {
+            length: bytes.len() as OM_uint32,
+            elements: if bytes.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                bytes.as_ptr() as *mut c_void
+            },
+        }
+    }
+
+    /// `oid_equal` is exactly byte-equality and is reflexive, for every pair of
+    /// OIDs up to 9 bytes.
+    #[kani::proof]
+    #[kani::unwind(11)]
+    fn oid_equal_is_byte_equality() {
+        let a: [u8; 9] = kani::any();
+        let la: usize = kani::any();
+        kani::assume(la <= a.len());
+        let b: [u8; 9] = kani::any();
+        let lb: usize = kani::any();
+        kani::assume(lb <= b.len());
+
+        let da = make_desc(&a[..la]);
+        let db = make_desc(&b[..lb]);
+        // SAFETY: both descriptors point at valid stack slices of their length.
+        unsafe {
+            assert!(oid_equal(&da, &db) == (a[..la] == b[..lb]));
+            assert!(oid_equal(&da, &da));
+            assert!(oid_equal(&db, &db));
+        }
+    }
+
+    /// `is_krb5_oid` is true for an arbitrary OID (up to 9 bytes) iff its bytes
+    /// are one of the four known krb5/iakerb OIDs.
+    #[kani::proof]
+    #[kani::unwind(11)]
+    fn is_krb5_oid_matches_known_set() {
+        let bytes: [u8; 9] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let slice = &bytes[..len];
+
+        let desc = make_desc(slice);
+        let expected = KNOWN_KRB5.iter().any(|known| *known == slice);
+        // SAFETY: desc points at a valid stack slice of `len` bytes.
+        unsafe {
+            assert!(is_krb5_oid(&desc) == expected);
+        }
+    }
+}

@@ -23,6 +23,11 @@ pub mod proc;
 pub mod rpc;
 pub mod xdr;
 
+/// Kani bounded-proof harnesses for the wire codec. Compiled only under
+/// `cargo kani` (`--cfg kani`); see `rust/docs/formal-verification.md`.
+#[cfg(kani)]
+mod verification;
+
 pub use frame::{frame, parse_header, FrameError};
 pub use rpc::{Message, GSSPROXY, GSSPROXYVERS, MAX_RPC_SIZE};
 pub use xdr::{Xdr, XdrDecoder, XdrEncoder, XdrError, XdrResult};
