@@ -154,36 +154,33 @@ fn build_import_and_canon_name(
 // These return the correct result shape with a GSS_S_FAILURE status so the
 // daemon stays wire-valid while the remaining handlers are ported.
 
+// `get_call_context`, `export_cred`, `import_cred` and `store_cred` are
+// `GP_EXEC_UNUSED_FUNC` stubs in the C daemon (`src/gp_rpc_process.c`): they
+// return RPC success with a zero-initialized result, i.e. `GSS_S_COMPLETE` and
+// an empty body. We return the same default-zeroed result so the bytes on the
+// wire match the C oracle exactly (a `GSS_S_FAILURE` here would not).
+
 pub fn get_call_context(_ctx: &CallContext, _arg: ArgGetCallContext) -> ResGetCallContext {
-    ResGetCallContext {
-        status: failure(),
-        ..Default::default()
-    }
+    ResGetCallContext::default()
 }
 
 pub fn export_cred(_ctx: &CallContext, _arg: ArgExportCred) -> ResExportCred {
-    ResExportCred {
-        status: failure(),
-        ..Default::default()
-    }
+    ResExportCred::default()
 }
 
 pub fn import_cred(_ctx: &CallContext, _arg: ArgImportCred) -> ResImportCred {
-    ResImportCred {
-        status: failure(),
-        ..Default::default()
-    }
-}
-
-pub fn acquire_cred(_ctx: &CallContext, _arg: ArgAcquireCred) -> ResAcquireCred {
-    ResAcquireCred {
-        status: failure(),
-        ..Default::default()
-    }
+    ResImportCred::default()
 }
 
 pub fn store_cred(_ctx: &CallContext, _arg: ArgStoreCred) -> ResStoreCred {
-    ResStoreCred {
+    ResStoreCred::default()
+}
+
+// acquire_cred is genuinely implemented in the C daemon; this remains a
+// wire-valid placeholder (GSS_S_FAILURE) until the credential acquisition path
+// is ported.
+pub fn acquire_cred(_ctx: &CallContext, _arg: ArgAcquireCred) -> ResAcquireCred {
+    ResAcquireCred {
         status: failure(),
         ..Default::default()
     }

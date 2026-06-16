@@ -12,3 +12,10 @@ libc.workspace = true
 # the gssproxy-specific OID constants, computed GSS_S_*/GSS_C_* values (bindgen
 # drops computed macros), and safe RAII wrappers on top.
 libgssapi-sys = "0.3"
+
+[build-dependencies]
+# libgssapi-sys binds only the gssapi headers; the credential sealing layer
+# (gp_export.c) needs the krb5 crypto/keytab API, so we generate our own krb5
+# bindings here and link libkrb5.
+bindgen = "0.70"
+pkg-config = "0.3"
