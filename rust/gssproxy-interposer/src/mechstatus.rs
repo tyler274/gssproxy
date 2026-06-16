@@ -55,7 +55,10 @@ fn cache() -> &'static MechCache {
     CACHE.get_or_init(|| {
         let (maj, _, res) = gpm::indicate_mechs();
         if maj != COMPLETE {
-            return MechCache { ok: false, info: Vec::new() };
+            return MechCache {
+                ok: false,
+                info: Vec::new(),
+            };
         }
         let info = res
             .mechs
@@ -287,13 +290,8 @@ pub unsafe extern "C" fn gssi_inquire_saslname_for_mech(
 
     let sp = special::special_mech(desired_mech as *const _);
     let mut m: OM_uint32 = 0;
-    maj = sys::gss_inquire_saslname_for_mech(
-        &mut m,
-        sp,
-        sasl_mech_name,
-        mech_name,
-        mech_description,
-    );
+    maj =
+        sys::gss_inquire_saslname_for_mech(&mut m, sp, sasl_mech_name, mech_name, mech_description);
     min = m;
     if maj != COMPLETE && tmaj != COMPLETE {
         maj = tmaj;
@@ -328,7 +326,11 @@ pub unsafe extern "C" fn gssi_display_status(
     }
 
     let val = unmap_error(status_value);
-    let mctx = if message_context.is_null() { 0 } else { *message_context };
+    let mctx = if message_context.is_null() {
+        0
+    } else {
+        *message_context
+    };
     let (maj, min, text) = gpm::display_status(val, GSS_C_MECH_CODE, mctx);
 
     if maj == consts::GSS_S_UNAVAILABLE {

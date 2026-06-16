@@ -137,7 +137,10 @@ unsafe fn store_into_ccache(
     let mut ret = krb5::krb5_cc_cache_match(ctx, cred.client, ccache);
     if ret == krb5::KRB5_CC_NOTFOUND as krb5::krb5_error_code {
         // New ccache in the collection; krb5_cc_new_unique takes only the type.
-        let colon = cc_name.iter().position(|&b| b == b':').unwrap_or(cc_name.len());
+        let colon = cc_name
+            .iter()
+            .position(|&b| b == b':')
+            .unwrap_or(cc_name.len());
         let cc_type = match CString::new(&cc_name[..colon]) {
             Ok(t) => t,
             Err(_) => return libc::ENOMEM as krb5::krb5_error_code,

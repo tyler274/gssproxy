@@ -137,7 +137,11 @@ fn uid_to_name(uid: u32) -> Option<String> {
         if name.is_null() {
             return None;
         }
-        Some(std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned())
+        Some(
+            std::ffi::CStr::from_ptr(name)
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }
 
@@ -333,7 +337,10 @@ fn check_cred(
 ) -> Result<(), u32> {
     let info = in_cred.inquire().map_err(|e| e.major)?;
 
-    let present = info.mechs.iter().any(|m| m.as_slice() == consts::KRB5_MECH_OID);
+    let present = info
+        .mechs
+        .iter()
+        .any(|m| m.as_slice() == consts::KRB5_MECH_OID);
     if !present {
         return Err(consts::GSS_S_CRED_UNAVAIL);
     }
@@ -376,10 +383,7 @@ pub fn cred_allowed(svc: &Service, cred: Option<&Cred>, target: &Name) -> Result
         return Ok(());
     }
 
-    let impersonator = match get_impersonator_name(cred) {
-        Ok(i) => i,
-        Err(major) => return Err(major),
-    };
+    let impersonator = get_impersonator_name(cred)?;
 
     // No impersonator entry: a normal credential, always allowed.
     let Some(impersonator) = impersonator else {
@@ -407,7 +411,9 @@ fn get_impersonator_name(cred: &Cred) -> Result<Option<Vec<u8>>, u32> {
 /// name, and compare it byte-for-byte against `impersonator`. Returns `Ok(())`
 /// on a match ("self"), `GSS_S_UNAUTHORIZED` otherwise.
 fn check_impersonator_name(target: &Name, impersonator: &[u8]) -> Result<(), u32> {
-    let canon = target.canonicalize(consts::KRB5_MECH_OID).map_err(|e| e.major)?;
+    let canon = target
+        .canonicalize(consts::KRB5_MECH_OID)
+        .map_err(|e| e.major)?;
     let (display, _name_type) = canon.display().map_err(|e| e.major)?;
     if display == impersonator {
         Ok(())

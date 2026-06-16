@@ -1,0 +1,76 @@
+name: Nix
+
+# Validates the Nix flake and the ./rust port: formatting, linting, the C<->Rust
+# interposer ABI parity gate, CLI parity, the upstream integration suite across
+# the C/Rust daemon and interposer combinations, and the dev container image.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Format & lint (nixpkgs-fmt, rustfmt, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - name: nixpkgs-fmt
+        run: nix build -L .#checks.x86_64-linux.nix-fmt
+      - name: cargo fmt --check
+        run: nix build -L .#checks.x86_64-linux.rust-fmt
+      - name: cargo clippy -D warnings
+        run: nix build -L .#checks.x86_64-linux.clippy
+
+  abi-parity:
+    name: Interposer ABI parity (C vs Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      # The headline gate: the Rust proxymech.so's exported gss_mech_interposer
+      # /gssi_* surface must stay a subset of (and match) the C plugin's ABI.
+      - name: proxymech.so symbol parity
+        run: nix build -L .#checks.x86_64-linux.interposer-symbol-parity
+      - name: CLI parity (C vs Rust daemon)
+        run: nix build -L .#checks.x86_64-linux.cli-parity
+
+  build:
+    name: Build packages (C, Rust, devcontainer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - name: gssproxy (C)
+        run: nix build -L .#gssproxy
+      - name: gssproxy-rs (Rust daemon + interposer)
+        run: nix build -L .#gssproxy-rs
+      - name: devcontainer image
+        run: nix build -L .#devcontainer
+
+  integration:
+    name: Upstream integration suite (${{ matrix.check }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          # C daemon + C interposer (baseline).
+          - integration-tests
+          # Rust daemon, C interposer/tests (wire/ABI compat, gate #1).
+          - integration-tests-rust
+          # C daemon, Rust interposer (interposer data-path compat, gate #2).
+          - integration-tests-rust-proxymech
+          # Rust daemon + Rust interposer end-to-end.
+          - integration-tests-all-rust
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - name: ${{ matrix.check }}
+        run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}

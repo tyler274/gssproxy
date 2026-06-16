@@ -227,8 +227,7 @@ pub unsafe fn special_available_mechs(
 /// pointers (compared by identity, as in `gssi_internal_release_oid`).
 pub fn is_registered_ptr(oid: *const gss_OID_desc) -> bool {
     let reg = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    reg.iter()
-        .any(|e| e.regular == oid || e.special == oid)
+    reg.iter().any(|e| e.regular == oid || e.special == oid)
 }
 
 #[cfg(test)]
@@ -258,7 +257,10 @@ mod tests {
             assert_eq!(sp, sp2);
             // And we can strip back to the original bytes.
             let back = unspecial_mech(sp);
-            assert_eq!(oids::oid_bytes(back).unwrap(), oids::oid_bytes(&krb5).unwrap());
+            assert_eq!(
+                oids::oid_bytes(back).unwrap(),
+                oids::oid_bytes(&krb5).unwrap()
+            );
             // Passing an already-special OID returns it unchanged.
             assert_eq!(special_mech(sp), sp);
             assert!(is_registered_ptr(sp));
@@ -344,10 +346,10 @@ mod prop_tests {
     }
 
     fn non_special_bytes() -> impl Strategy<Value = Vec<u8>> {
-        prop::collection::vec(any::<u8>(), 1..24).prop_filter(
-            "input must not already carry the interposer prefix",
-            |b| !b.starts_with(INTERPOSER_PREFIX),
-        )
+        prop::collection::vec(any::<u8>(), 1..24)
+            .prop_filter("input must not already carry the interposer prefix", |b| {
+                !b.starts_with(INTERPOSER_PREFIX)
+            })
     }
 
     proptest! {
@@ -468,7 +470,11 @@ mod prop_tests {
         // Every mech was observed and each got a unique pointer.
         assert_eq!(by_idx.len(), mechs.len());
         let unique: HashSet<usize> = by_idx.values().copied().collect();
-        assert_eq!(unique.len(), mechs.len(), "distinct mechs must have distinct specials");
+        assert_eq!(
+            unique.len(),
+            mechs.len(),
+            "distinct mechs must have distinct specials"
+        );
 
         // Strips back correctly after the concurrent churn.
         for (i, bytes) in mechs.iter().enumerate() {

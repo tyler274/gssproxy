@@ -79,7 +79,9 @@ fn main() {
         builder = builder.clang_arg(format!("-I{}", path.display()));
     }
 
-    let bindings = builder.generate().expect("failed to generate krb5 bindings");
+    let bindings = builder
+        .generate()
+        .expect("failed to generate krb5 bindings");
 
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings

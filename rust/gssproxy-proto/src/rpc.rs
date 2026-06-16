@@ -143,7 +143,10 @@ pub enum ReplyBody {
     /// MSG_ACCEPTED + SUCCESS: verifier, then the procedure result follows.
     AcceptedSuccess { verf: OpaqueAuth },
     /// MSG_ACCEPTED + PROG_MISMATCH.
-    ProgMismatch { verf: OpaqueAuth, info: MismatchInfo },
+    ProgMismatch {
+        verf: OpaqueAuth,
+        info: MismatchInfo,
+    },
     /// MSG_ACCEPTED with another accept status (no body).
     AcceptedOther { verf: OpaqueAuth, status: i32 },
     /// MSG_DENIED with the raw reject discriminant and value.
@@ -305,10 +308,7 @@ mod tests {
         let got = Message::decode(&mut d).unwrap();
         assert_eq!(got.xid, 7);
         assert!(!got.is_call);
-        assert!(matches!(
-            got.reply,
-            Some(ReplyBody::AcceptedSuccess { .. })
-        ));
+        assert!(matches!(got.reply, Some(ReplyBody::AcceptedSuccess { .. })));
         // No trailing bytes: a success reply envelope has no result body here.
         assert_eq!(d.remaining(), 0);
     }

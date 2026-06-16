@@ -6,8 +6,7 @@ use std::os::raw::c_void;
 use std::ptr;
 
 use gssapi_sys::sys::{
-    self, gss_OID, gss_OID_desc, gss_buffer_desc, gss_buffer_t, gss_channel_bindings_t,
-    OM_uint32,
+    self, gss_OID, gss_OID_desc, gss_buffer_desc, gss_buffer_t, gss_channel_bindings_t, OM_uint32,
 };
 use gssproxy_proto::gssx::{GssxCb, Opaque};
 
@@ -23,7 +22,7 @@ pub unsafe fn read_buffer<'a>(buf: gss_buffer_t) -> &'a [u8] {
     if b.value.is_null() || b.length == 0 {
         return &[];
     }
-    std::slice::from_raw_parts(b.value as *const u8, b.length as usize)
+    std::slice::from_raw_parts(b.value as *const u8, b.length)
 }
 
 /// Write `data` into an output `gss_buffer_t`, allocating with `malloc` so the
@@ -89,7 +88,7 @@ pub unsafe fn cb_to_gssx(cb: gss_channel_bindings_t) -> Option<GssxCb> {
         if b.value.is_null() || b.length == 0 {
             Opaque::new(Vec::new())
         } else {
-            Opaque::new(std::slice::from_raw_parts(b.value as *const u8, b.length as usize).to_vec())
+            Opaque::new(std::slice::from_raw_parts(b.value as *const u8, b.length).to_vec())
         }
     };
     Some(GssxCb {
@@ -200,7 +199,7 @@ pub unsafe fn oidset_to_vecs(set: sys::gss_OID_set) -> Vec<Vec<u8>> {
         return Vec::new();
     }
     let s = &*set;
-    let mut out = Vec::with_capacity(s.count as usize);
+    let mut out = Vec::with_capacity(s.count);
     for i in 0..s.count {
         let m = s.elements.add(i) as gss_OID;
         out.push(oid_bytes(m).unwrap_or(&[]).to_vec());
@@ -228,10 +227,7 @@ pub unsafe fn build_oid_set(mechs: &[Vec<u8>]) -> sys::gss_OID_set {
 ///
 /// # Safety
 /// `out` must be null or point to a writable `gss_OID_set`.
-pub unsafe fn write_actual_mechs(
-    out: *mut sys::gss_OID_set,
-    mechs: &[Vec<u8>],
-) -> bool {
+pub unsafe fn write_actual_mechs(out: *mut sys::gss_OID_set, mechs: &[Vec<u8>]) -> bool {
     if out.is_null() {
         return true;
     }

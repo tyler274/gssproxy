@@ -103,13 +103,19 @@ mod tests {
     fn no_service_for_other_uid() {
         let cfg = config_with_service("/run/gp.sock", 1000);
         let ctx = CallContext::resolve(&cfg, "/run/gp.sock", 4242, 4242, None);
-        assert!(ctx.service.is_none(), "no service should match a foreign uid");
+        assert!(
+            ctx.service.is_none(),
+            "no service should match a foreign uid"
+        );
     }
 
     #[test]
     fn no_service_on_wrong_socket() {
         let cfg = config_with_service("/run/gp.sock", 1000);
         let ctx = CallContext::resolve(&cfg, "/run/other.sock", 1000, 1000, None);
-        assert!(ctx.service.is_none(), "default-socket service must not match a different socket");
+        assert!(
+            ctx.service.is_none(),
+            "default-socket service must not match a different socket"
+        );
     }
 }

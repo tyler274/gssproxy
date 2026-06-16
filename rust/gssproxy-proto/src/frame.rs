@@ -81,6 +81,9 @@ mod tests {
     fn frame_prepends_header() {
         let f = frame(b"hi");
         assert_eq!(&f[4..], b"hi");
-        assert_eq!(parse_header(u32::from_be_bytes([f[0], f[1], f[2], f[3]])).unwrap(), 2);
+        assert_eq!(
+            parse_header(u32::from_be_bytes([f[0], f[1], f[2], f[3]])).unwrap(),
+            2
+        );
     }
 }

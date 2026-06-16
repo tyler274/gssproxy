@@ -73,8 +73,7 @@ impl CredHandle {
             let mut context: krb5_context = ptr::null_mut();
             check(krb5_init_context(&mut context), "krb5_init_context")?;
 
-            let derived =
-                derive_from_keytab(context, keytab).or_else(|| derive_ephemeral(context));
+            let derived = derive_from_keytab(context, keytab).or_else(|| derive_ephemeral(context));
 
             krb5_free_context(context);
 
@@ -153,7 +152,7 @@ impl CredHandle {
         let data_in: Vec<u8> = if pad != 0 {
             let mut v = Vec::with_capacity(len + pad as usize);
             v.extend_from_slice(plain);
-            v.extend(std::iter::repeat(pad).take(pad as usize));
+            v.extend(std::iter::repeat_n(pad, pad as usize));
             v
         } else {
             plain.to_vec()
@@ -286,9 +285,11 @@ unsafe fn derive_from_keytab(
                 let mut p = permitted;
                 while *p != 0 {
                     if *p == entry.key.enctype {
-                        let bytes =
-                            std::slice::from_raw_parts(entry.key.contents, entry.key.length as usize)
-                                .to_vec();
+                        let bytes = std::slice::from_raw_parts(
+                            entry.key.contents,
+                            entry.key.length as usize,
+                        )
+                        .to_vec();
                         found = Some((entry.key.enctype, bytes));
                         break;
                     }
@@ -351,9 +352,8 @@ mod tests {
         let sealed = a.seal(b"secret payload").expect("seal");
         // b has a different random key, so decryption must not yield the
         // plaintext (it either errors or produces garbage).
-        match b.unseal(&sealed) {
-            Ok(p) => assert_ne!(p, b"secret payload"),
-            Err(_) => {}
+        if let Ok(p) = b.unseal(&sealed) {
+            assert_ne!(p, b"secret payload");
         }
     }
 }

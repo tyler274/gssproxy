@@ -242,7 +242,10 @@ pub unsafe fn wrap_sec_ctx_token(mech_type: gss_OID, token: &[u8]) -> Option<Vec
 ///
 /// # Safety
 /// `local` must point to a writable `gss_ctx_id_t`.
-pub unsafe fn remote_to_local_ctx(remote: &mut Option<GssxCtx>, local: &mut gss_ctx_id_t) -> Status {
+pub unsafe fn remote_to_local_ctx(
+    remote: &mut Option<GssxCtx>,
+    local: &mut gss_ctx_id_t,
+) -> Status {
     let token = match remote {
         Some(c) => c.exported_context_token.as_slice().to_vec(),
         None => return (consts::GSS_S_FAILURE, 0),
@@ -342,7 +345,9 @@ pub unsafe fn local_to_name(local: gss_name_t) -> (u32, u32, Option<GssxName>) {
         return (maj, min, None);
     }
     let disp = convert::read_buffer(&mut buf as *mut _).to_vec();
-    let nt = convert::oid_bytes(ntype).map(|b| b.to_vec()).unwrap_or_default();
+    let nt = convert::oid_bytes(ntype)
+        .map(|b| b.to_vec())
+        .unwrap_or_default();
     convert::release_buffer(&mut buf as *mut _);
     let name = gpm::import_name(&disp, &nt);
     (COMPLETE, 0, Some(name))
@@ -533,7 +538,10 @@ mod tests {
         // Differ in display name / element count / handle reference.
         assert!(!creds_are_equal(Some(&a), Some(&cred(b"bob", 1, b"ref"))));
         assert!(!creds_are_equal(Some(&a), Some(&cred(b"alice", 2, b"ref"))));
-        assert!(!creds_are_equal(Some(&a), Some(&cred(b"alice", 1, b"other"))));
+        assert!(!creds_are_equal(
+            Some(&a),
+            Some(&cred(b"alice", 1, b"other"))
+        ));
     }
 
     #[test]
@@ -547,8 +555,7 @@ mod tests {
             wrap_sec_ctx_token(t.as_ptr(), token).expect("wrap")
         };
         assert!(out.len() > 4 + token.len());
-        let mech_len =
-            u32::from_be_bytes([out[0], out[1], out[2], out[3]]) as usize;
+        let mech_len = u32::from_be_bytes([out[0], out[1], out[2], out[3]]) as usize;
         assert_eq!(out.len(), 4 + mech_len + token.len());
         // The special mech embeds the real OID bytes as its suffix.
         let sp = &out[4..4 + mech_len];

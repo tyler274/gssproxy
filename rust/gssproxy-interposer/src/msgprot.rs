@@ -247,5 +247,11 @@ pub unsafe extern "C" fn gssi_verify_mic(
         Ok(l) => l,
         Err(maj) => return maj,
     };
-    sys::gss_verify_mic(minor_status, local, message_buffer, message_token, qop_state)
+    sys::gss_verify_mic(
+        minor_status,
+        local,
+        message_buffer,
+        message_token,
+        qop_state,
+    )
 }

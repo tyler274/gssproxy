@@ -74,7 +74,10 @@ enum Parsed {
     Help,
     Version,
     /// `--extract-ccache SRC [--into-ccache DST]`: run the ccache extractor.
-    ExtractCcache { source: String, dest: Option<String> },
+    ExtractCcache {
+        source: String,
+        dest: Option<String>,
+    },
     /// `-D` and `-i` given together: the C daemon prints a message and exits 0.
     DaemonInteractiveConflict,
     Error(String),
@@ -185,8 +188,16 @@ fn load_config(path: &Path, socket: &str) -> Config {
 }
 
 fn run(args: Args) {
-    let _ = (args.interactive, args.daemon, args.debug, args.debug_level,
-             args.syslog_status, args.userproxy, &args.config_dir, args.idle_timeout);
+    let _ = (
+        args.interactive,
+        args.daemon,
+        args.debug,
+        args.debug_level,
+        args.syslog_status,
+        args.userproxy,
+        &args.config_dir,
+        args.idle_timeout,
+    );
     // Daemonization, debug toggling, and userproxy mode are not implemented;
     // the daemon always runs in the foreground.
 
@@ -328,7 +339,10 @@ mod tests {
     fn missing_option_argument_is_error() {
         assert!(matches!(parse(&["-s"]), Parsed::Error(_)));
         assert!(matches!(parse(&["--config"]), Parsed::Error(_)));
-        assert!(matches!(parse(&["--debug-level", "notanint"]), Parsed::Error(_)));
+        assert!(matches!(
+            parse(&["--debug-level", "notanint"]),
+            Parsed::Error(_)
+        ));
     }
 
     #[test]
@@ -344,7 +358,10 @@ mod tests {
     fn extract_ccache_options() {
         assert_eq!(
             parse(&["--extract-ccache", "FILE:/tmp/cc"]),
-            Parsed::ExtractCcache { source: "FILE:/tmp/cc".into(), dest: None }
+            Parsed::ExtractCcache {
+                source: "FILE:/tmp/cc".into(),
+                dest: None
+            }
         );
         assert_eq!(
             parse(&["--extract-ccache=FILE:/a", "--into-ccache=FILE:/b"]),
@@ -359,7 +376,10 @@ mod tests {
     fn daemon_interactive_conflict_matches_c() {
         // C prints a message and exits 0 when -D and -i are combined.
         assert_eq!(parse(&["-D", "-i"]), Parsed::DaemonInteractiveConflict);
-        assert_eq!(parse(&["--daemon", "--interactive"]), Parsed::DaemonInteractiveConflict);
+        assert_eq!(
+            parse(&["--daemon", "--interactive"]),
+            Parsed::DaemonInteractiveConflict
+        );
         // Either alone is fine.
         assert!(matches!(parse(&["-D"]), Parsed::Run(_)));
         assert!(matches!(parse(&["-i"]), Parsed::Run(_)));
@@ -464,7 +484,7 @@ mod prop_tests {
                     prop_assert_eq!(a.daemon, daemon);
                     prop_assert_eq!(a.userproxy, has("-u", "--userproxy"));
                     prop_assert_eq!(a.debug, has("-d", "--debug"));
-                    prop_assert_eq!(a.syslog_status, flags.iter().any(|f| *f == "--syslog-status"));
+                    prop_assert_eq!(a.syslog_status, flags.contains(&"--syslog-status"));
                 }
                 other => prop_assert!(false, "value-less flags must Run, got {:?}", other),
             }

@@ -13,7 +13,9 @@ use gssproxy_client::gpm;
 use crate::behavior::{self, Behavior};
 use crate::convert;
 use crate::error::map_error;
-use crate::handle::{local_to_name, name_to_local, store_remote_creds, CredHandle, CtxHandle, NameHandle};
+use crate::handle::{
+    local_to_name, name_to_local, store_remote_creds, CredHandle, CtxHandle, NameHandle,
+};
 use crate::{handle, special};
 
 const COMPLETE: u32 = 0;
@@ -39,13 +41,14 @@ unsafe fn init_ctx_local(
     ret_flags: *mut OM_uint32,
     time_rec: *mut OM_uint32,
 ) -> (u32, u32) {
-    if name.remote.is_some() && name.local.is_null() {
-        let r = name.remote.as_mut().unwrap();
-        let (maj, min, local) = name_to_local(r, mech_type);
-        if maj != COMPLETE {
-            return (maj, min);
+    if name.local.is_null() {
+        if let Some(r) = name.remote.as_mut() {
+            let (maj, min, local) = name_to_local(r, mech_type);
+            if maj != COMPLETE {
+                return (maj, min);
+            }
+            name.local = local;
         }
-        name.local = local;
     }
     let sp = special::special_mech(mech_type as *const _);
     let mut min: OM_uint32 = 0;
@@ -126,7 +129,11 @@ pub unsafe extern "C" fn gssi_init_sec_context(
         cred_ptr = owned_cred.as_mut().unwrap().as_mut() as *mut CredHandle;
     }
 
-    let behavior = if local_only { Behavior::LocalOnly } else { behavior::get() };
+    let behavior = if local_only {
+        Behavior::LocalOnly
+    } else {
+        behavior::get()
+    };
     let name_ptr = target_name as *mut NameHandle;
 
     let (mut maj, mut min) = 'done: {
@@ -140,8 +147,18 @@ pub unsafe extern "C" fn gssi_init_sec_context(
         // Local first.
         if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
             let (m, mi) = init_ctx_local(
-                cred, ctx, name, mech_type, req_flags, time_req, input_cb, input_token,
-                actual_mech_type, output_token, ret_flags, time_rec,
+                cred,
+                ctx,
+                name,
+                mech_type,
+                req_flags,
+                time_req,
+                input_cb,
+                input_token,
+                actual_mech_type,
+                output_token,
+                ret_flags,
+                time_rec,
             );
             if keep(m) || behavior == Behavior::LocalOnly {
                 break 'done (m, mi);
@@ -213,8 +230,18 @@ pub unsafe extern "C" fn gssi_init_sec_context(
 
             if behavior == Behavior::RemoteFirst {
                 let (m, mi) = init_ctx_local(
-                    cred, ctx, name, mech_type, req_flags, time_req, input_cb, input_token,
-                    actual_mech_type, output_token, ret_flags, time_rec,
+                    cred,
+                    ctx,
+                    name,
+                    mech_type,
+                    req_flags,
+                    time_req,
+                    input_cb,
+                    input_token,
+                    actual_mech_type,
+                    output_token,
+                    ret_flags,
+                    time_rec,
                 );
                 break 'done (m, mi);
             }

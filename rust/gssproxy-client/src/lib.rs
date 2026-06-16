@@ -347,11 +347,8 @@ mod tests {
 
     /// Create a private temp dir + socket path and point GSSPROXY_SOCKET at it.
     fn setup_socket(tag: &str) -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "gpm-{tag}-{}-{}",
-            std::process::id(),
-            unique()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gpm-{tag}-{}-{}", std::process::id(), unique()));
         std::fs::create_dir_all(&dir).unwrap();
         let sock = dir.join("s.sock");
         let _ = std::fs::remove_file(&sock);
@@ -457,7 +454,11 @@ mod tests {
         // The body is byte-for-byte what gssproxy-proto encodes (the same XDR
         // the C client emits via xdr_gp_rpc_msg + the proc arg encoder).
         let xid = xid_of(body);
-        let expected = encode_request(xid, GssxProc::IndicateMechs as u32, &ArgIndicateMechs::default());
+        let expected = encode_request(
+            xid,
+            GssxProc::IndicateMechs as u32,
+            &ArgIndicateMechs::default(),
+        );
         assert_eq!(body, &expected);
 
         // Envelope fields match the constants gpm_common.c hard-codes.
@@ -537,7 +538,10 @@ mod tests {
         let _g = serial();
         let (dir, sock) = setup_socket("wrongxid");
         let server = spawn_server(sock.clone(), 1, |_, body| {
-            Some(success_reply(xid_of(body).wrapping_add(99), &ResIndicateMechs::default()))
+            Some(success_reply(
+                xid_of(body).wrapping_add(99),
+                &ResIndicateMechs::default(),
+            ))
         });
         let r: Result<ResIndicateMechs> =
             make_call(GssxProc::IndicateMechs, &ArgIndicateMechs::default());
@@ -718,7 +722,10 @@ mod tests {
         conn.uid = unsafe { libc::geteuid() };
         conn.gid = unsafe { libc::getegid() };
         conn.refresh_identity();
-        assert!(conn.stream.is_none(), "stale post-fork socket must be dropped");
+        assert!(
+            conn.stream.is_none(),
+            "stale post-fork socket must be dropped"
+        );
     }
 
     #[test]
@@ -777,7 +784,11 @@ mod tests {
         assert!(child_ok, "child make_call after fork should succeed");
 
         let recorded = server.join().unwrap();
-        assert_eq!(recorded.len(), 2, "parent and child each opened a connection");
+        assert_eq!(
+            recorded.len(),
+            2,
+            "parent and child each opened a connection"
+        );
         cleanup(dir, sock);
     }
 
@@ -833,9 +844,9 @@ mod tests {
     /// transport fault that makes the client reconnect and try again.
     fn classify(b: Behavior) -> Option<Expect> {
         match b {
-            Behavior::SuccessCorrect
-            | Behavior::SuccessSlow
-            | Behavior::SuccessTrailingGarbage => Some(Expect::Ok),
+            Behavior::SuccessCorrect | Behavior::SuccessSlow | Behavior::SuccessTrailingGarbage => {
+                Some(Expect::Ok)
+            }
             Behavior::WrongXid
             | Behavior::ReplyIsCall
             | Behavior::Denied
@@ -879,9 +890,7 @@ mod tests {
                 env.extend_from_slice(&[0xAA; 7]);
                 frame(&env)
             }
-            Behavior::WrongXid => {
-                success_reply(xid.wrapping_add(99), &ResIndicateMechs::default())
-            }
+            Behavior::WrongXid => success_reply(xid.wrapping_add(99), &ResIndicateMechs::default()),
             Behavior::ReplyIsCall => frame(&encode_request(
                 xid,
                 GssxProc::IndicateMechs as u32,
@@ -907,9 +916,9 @@ mod tests {
                 frame(&e.into_bytes())
             }
             Behavior::BadHeaderNoFragment => 8u32.to_be_bytes().to_vec(),
-            Behavior::BadHeaderOversized => {
-                (((MAX_RPC_SIZE as u32) + 1) | FRAGMENT_BIT).to_be_bytes().to_vec()
-            }
+            Behavior::BadHeaderOversized => (((MAX_RPC_SIZE as u32) + 1) | FRAGMENT_BIT)
+                .to_be_bytes()
+                .to_vec(),
             Behavior::ShortBody => {
                 let mut raw = (100u32 | FRAGMENT_BIT).to_be_bytes().to_vec();
                 raw.extend_from_slice(&[0u8; 4]);

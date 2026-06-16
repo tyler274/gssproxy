@@ -29,7 +29,11 @@ fn unique_socket_path() -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    p.push(format!("gssproxy-rs-test-{}-{}.sock", std::process::id(), nanos));
+    p.push(format!(
+        "gssproxy-rs-test-{}-{}.sock",
+        std::process::id(),
+        nanos
+    ));
     p
 }
 
@@ -102,7 +106,12 @@ fn expect_success(reply: &[u8], xid: u32) -> XdrDecoder<'_> {
 fn indicate_mechs_round_trips_over_socket() {
     let mut stream = connect_daemon();
     let xid = 0x1234_5678;
-    let reply = round_trip(&mut stream, xid, GssxProc::IndicateMechs, &ArgIndicateMechs::default());
+    let reply = round_trip(
+        &mut stream,
+        xid,
+        GssxProc::IndicateMechs,
+        &ArgIndicateMechs::default(),
+    );
     let mut d = expect_success(&reply, xid);
 
     let res = ResIndicateMechs::decode(&mut d).expect("decode indicate_mechs result");
@@ -129,14 +138,24 @@ fn unused_stub_procs_return_zeroed_success() {
     let mut stream = connect_daemon();
 
     let xid = 0xaaaa_0001;
-    let reply = round_trip(&mut stream, xid, GssxProc::GetCallContext, &ArgGetCallContext::default());
+    let reply = round_trip(
+        &mut stream,
+        xid,
+        GssxProc::GetCallContext,
+        &ArgGetCallContext::default(),
+    );
     let mut d = expect_success(&reply, xid);
     let res = ResGetCallContext::decode(&mut d).expect("decode get_call_context result");
     assert_eq!(d.remaining(), 0);
     assert_eq!(res, ResGetCallContext::default(), "must be zeroed-success");
 
     let xid = 0xaaaa_0002;
-    let reply = round_trip(&mut stream, xid, GssxProc::StoreCred, &ArgStoreCred::default());
+    let reply = round_trip(
+        &mut stream,
+        xid,
+        GssxProc::StoreCred,
+        &ArgStoreCred::default(),
+    );
     let mut d = expect_success(&reply, xid);
     let res = ResStoreCred::decode(&mut d).expect("decode store_cred result");
     assert_eq!(d.remaining(), 0);

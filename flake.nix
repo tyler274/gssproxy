@@ -24,6 +24,10 @@
       packages = forAllSystems ({ pkgs, ... }: {
         inherit (pkgs) gssproxy gssproxy-rs;
         default = pkgs.gssproxy;
+
+        # Reproducible developer container image (built by Nix, no Dockerfile):
+        #   nix build .#devcontainer && docker load < result
+        devcontainer = import ./nix/devcontainer.nix { inherit pkgs; };
       });
 
       nixosModules.gssproxy = {
@@ -32,59 +36,78 @@
       };
       nixosModules.default = self.nixosModules.gssproxy;
 
-      checks = forAllSystems ({ pkgs, system, ... }: {
-        vm-test = import ./nix/test.nix {
-          inherit pkgs;
-          module = self.nixosModules.gssproxy;
-        };
+      checks = forAllSystems ({ pkgs, system, ... }:
+        let
+          # Rust formatting (`cargo fmt --check`) and lint (`cargo clippy
+          # -D warnings`) gates for the ./rust workspace.
+          rustChecks = import ./nix/rust-checks.nix { inherit pkgs; };
 
-        # Full upstream in-repo test suite (tests/runtests.py via `make check`).
-        integration-tests = import ./nix/integration-tests.nix {
-          inherit pkgs;
-          inherit (pkgs) gssproxy;
-        };
+          # Just the Nix sources, so the formatting gate doesn't depend on the
+          # whole tree.
+          nixSrc = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [ ./flake.nix ./nix ];
+          };
+        in
+        {
+          vm-test = import ./nix/test.nix {
+            inherit pkgs;
+            module = self.nixosModules.gssproxy;
+          };
 
-        # Same upstream suite, but driven against the Rust daemon (oracle gate
-        # #1): the C-built proxymech.so and test programs talk to the Rust
-        # gssproxy over the wire, proving protocol/ABI compatibility.
-        integration-tests-rust = import ./nix/integration-tests.nix {
-          inherit pkgs;
-          inherit (pkgs) gssproxy;
-          daemon = pkgs.gssproxy-rs;
-        };
+          # Full upstream in-repo test suite (tests/runtests.py via `make check`).
+          integration-tests = import ./nix/integration-tests.nix {
+            inherit pkgs;
+            inherit (pkgs) gssproxy;
+          };
 
-        # CLI behaviour parity between the C and Rust gssproxy binaries
-        # (--version/--help/unknown-option/missing-config).
-        cli-parity = import ./nix/cli-tests.nix {
-          inherit pkgs;
-          inherit (pkgs) gssproxy gssproxy-rs;
-        };
+          # Same upstream suite, but driven against the Rust daemon (oracle gate
+          # #1): the C-built proxymech.so and test programs talk to the Rust
+          # gssproxy over the wire, proving protocol/ABI compatibility.
+          integration-tests-rust = import ./nix/integration-tests.nix {
+            inherit pkgs;
+            inherit (pkgs) gssproxy;
+            daemon = pkgs.gssproxy-rs;
+          };
 
-        # Interposer ABI parity: the Rust proxymech.so's exported
-        # gss_mech_interposer/gssi_* surface must be a subset of the C plugin's.
-        interposer-symbol-parity = import ./nix/interposer-symbols.nix {
-          inherit pkgs;
-          inherit (pkgs) gssproxy gssproxy-rs;
-        };
+          # CLI behaviour parity between the C and Rust gssproxy binaries
+          # (--version/--help/unknown-option/missing-config).
+          cli-parity = import ./nix/cli-tests.nix {
+            inherit pkgs;
+            inherit (pkgs) gssproxy gssproxy-rs;
+          };
 
-        # Upstream suite with the Rust libproxymech.so loaded in place of the
-        # C interposer (oracle gate #2), talking to the C daemon. This proves
-        # the Rust interposer data path is wire/ABI compatible.
-        integration-tests-rust-proxymech = import ./nix/integration-tests.nix {
-          inherit pkgs;
-          inherit (pkgs) gssproxy;
-          proxymech = pkgs.gssproxy-rs;
-        };
+          # Interposer ABI parity: the Rust proxymech.so's exported
+          # gss_mech_interposer/gssi_* surface must be a subset of the C plugin's.
+          interposer-symbol-parity = import ./nix/interposer-symbols.nix {
+            inherit pkgs;
+            inherit (pkgs) gssproxy gssproxy-rs;
+          };
 
-        # Upstream suite end-to-end on the Rust port: Rust daemon AND Rust
-        # interposer, with only the C test programs unchanged.
-        integration-tests-all-rust = import ./nix/integration-tests.nix {
-          inherit pkgs;
-          inherit (pkgs) gssproxy;
-          daemon = pkgs.gssproxy-rs;
-          proxymech = pkgs.gssproxy-rs;
-        };
-      });
+          # Upstream suite with the Rust libproxymech.so loaded in place of the
+          # C interposer (oracle gate #2), talking to the C daemon. This proves
+          # the Rust interposer data path is wire/ABI compatible.
+          integration-tests-rust-proxymech = import ./nix/integration-tests.nix {
+            inherit pkgs;
+            inherit (pkgs) gssproxy;
+            proxymech = pkgs.gssproxy-rs;
+          };
+
+          # Upstream suite end-to-end on the Rust port: Rust daemon AND Rust
+          # interposer, with only the C test programs unchanged.
+          integration-tests-all-rust = import ./nix/integration-tests.nix {
+            inherit pkgs;
+            inherit (pkgs) gssproxy;
+            daemon = pkgs.gssproxy-rs;
+            proxymech = pkgs.gssproxy-rs;
+          };
+
+          # Nix sources must be nixpkgs-fmt clean.
+          nix-fmt = import ./nix/nix-fmt.nix { inherit pkgs; src = nixSrc; };
+
+          # Rust workspace must be rustfmt-clean and clippy-clean.
+          inherit (rustChecks) rust-fmt clippy;
+        });
 
       devShells = forAllSystems ({ pkgs, ... }: {
         default = pkgs.mkShell {
@@ -103,6 +126,9 @@
             rust-analyzer
             pkg-config
             krb5
+            # Nix formatter, so `nixpkgs-fmt` (matching the nix-fmt check) and
+            # `nix fmt` are available locally.
+            nixpkgs-fmt
             # Supplies libclang/LIBCLANG_PATH so libgssapi-sys's bindgen build
             # script works in the dev shell, matching nix/rust.nix.
             rustPlatform.bindgenHook

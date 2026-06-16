@@ -65,7 +65,13 @@ fn encode_proc_reply(
             run!(ctx, d, xid, ArgGetCallContext, handlers::get_call_context)
         }
         GssxProc::ImportAndCanonName => {
-            run!(ctx, d, xid, ArgImportAndCanonName, handlers::import_and_canon_name)
+            run!(
+                ctx,
+                d,
+                xid,
+                ArgImportAndCanonName,
+                handlers::import_and_canon_name
+            )
         }
         GssxProc::ExportCred => run!(ctx, d, xid, ArgExportCred, handlers::export_cred),
         GssxProc::ImportCred => run!(ctx, d, xid, ArgImportCred, handlers::import_cred),
@@ -75,7 +81,13 @@ fn encode_proc_reply(
             run!(ctx, d, xid, ArgInitSecContext, handlers::init_sec_context)
         }
         GssxProc::AcceptSecContext => {
-            run!(ctx, d, xid, ArgAcceptSecContext, handlers::accept_sec_context)
+            run!(
+                ctx,
+                d,
+                xid,
+                ArgAcceptSecContext,
+                handlers::accept_sec_context
+            )
         }
         GssxProc::ReleaseHandle => run!(ctx, d, xid, ArgReleaseHandle, handlers::release_handle),
         GssxProc::GetMic => run!(ctx, d, xid, ArgGetMic, handlers::get_mic),

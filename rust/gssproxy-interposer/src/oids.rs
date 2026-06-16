@@ -96,8 +96,12 @@ pub unsafe fn oid_equal(a: *const gss_OID_desc, b: *const gss_OID_desc) -> bool 
 
 /// `gpp_is_krb5_oid`: true for any of the krb5/iakerb mech OIDs we proxy.
 ///
+/// Kept for parity with the C helper of the same name; not yet referenced by
+/// the Rust data path.
+///
 /// # Safety
 /// `mech` must satisfy the contract of [`oid_bytes`].
+#[allow(dead_code)]
 pub unsafe fn is_krb5_oid(mech: *const gss_OID_desc) -> bool {
     let b = base();
     oid_equal(mech, &b.krb5)
@@ -147,7 +151,10 @@ mod tests {
         unsafe {
             assert_eq!(oid_bytes(&b.krb5).unwrap(), consts::KRB5_MECH_OID);
             assert_eq!(oid_bytes(&b.krb5_old).unwrap(), consts::KRB5_OLD_MECH_OID);
-            assert_eq!(oid_bytes(&b.krb5_wrong).unwrap(), consts::KRB5_WRONG_MECH_OID);
+            assert_eq!(
+                oid_bytes(&b.krb5_wrong).unwrap(),
+                consts::KRB5_WRONG_MECH_OID
+            );
             assert_eq!(oid_bytes(&b.iakerb).unwrap(), consts::IAKERB_MECH_OID);
             assert_eq!(
                 oid_bytes(&b.interposer).unwrap(),

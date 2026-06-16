@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v6
     - name: Install dependencies
       run: |
           sudo apt-get update
@@ -24,15 +24,23 @@ jobs:
           autoreconf -fiv
           ./configure
     - name: Check for changes
+      env:
+        COVERITY_SCAN_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
       run: |
           echo "RUN_COV=0" >> $GITHUB_ENV;
+          # Without the Coverity token (e.g. on forks) the scan action would
+          # download an HTML error page instead of the build tool and fail; skip.
+          if [ -z "${COVERITY_SCAN_TOKEN}" ]; then
+            echo "COVERITY_SCAN_TOKEN not configured; skipping Coverity scan."
+            exit 0
+          fi
           DIFF=`git log --since=1week | wc -l`
           if [ x${DIFF} != "x0" ]; then
             echo "RUN_COV=1" >> $GITHUB_ENV;
           fi
     - name: Coverity Scan
       if: env.RUN_COV == 1
-      uses: vapier/coverity-scan-action@v1
+      uses: vapier/coverity-scan-action@v1.8.0
       with:
         project: "gssproxy"
         email: ${{ secrets.COVERITY_SCAN_EMAIL }}

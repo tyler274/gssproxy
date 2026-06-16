@@ -369,12 +369,18 @@ impl Xdr for GssxCtx {
 pub const GSSX_C_HANDLE_SEC_CTX: i32 = 0;
 pub const GSSX_C_HANDLE_CRED: i32 = 1;
 
+// Mirrors the on-wire `gssx_handle` XDR union; variant sizes follow the
+// protocol structs, so we intentionally keep them inline rather than boxing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GssxHandle {
     SecCtx(GssxCtx),
     Cred(GssxCred),
     /// Any other discriminant: opaque extensions blob.
-    Extensions { handle_type: i32, data: OctetString },
+    Extensions {
+        handle_type: i32,
+        data: OctetString,
+    },
 }
 
 impl Xdr for GssxHandle {

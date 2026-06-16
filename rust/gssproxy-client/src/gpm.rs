@@ -120,7 +120,11 @@ pub fn display_status(
                     if st.major_status == status_value as u64
                         && !st.major_status_string.is_empty() =>
                 {
-                    (GSS_S_COMPLETE, 0, st.major_status_string.as_slice().to_vec())
+                    (
+                        GSS_S_COMPLETE,
+                        0,
+                        st.major_status_string.as_slice().to_vec(),
+                    )
                 }
                 _ => (consts::GSS_S_UNAVAILABLE, 0, Vec::new()),
             },
@@ -132,7 +136,11 @@ pub fn display_status(
                     if message_context != 0 {
                         (consts::GSS_S_FAILURE, libc::EINVAL as u32, Vec::new())
                     } else {
-                        (GSS_S_COMPLETE, 0, st.minor_status_string.as_slice().to_vec())
+                        (
+                            GSS_S_COMPLETE,
+                            0,
+                            st.minor_status_string.as_slice().to_vec(),
+                        )
                     }
                 }
                 _ => (consts::GSS_S_UNAVAILABLE, 0, Vec::new()),
@@ -311,7 +319,10 @@ pub fn acquire_cred(
         input_cred_handle: in_cred.cloned(),
         desired_name: desired_name.cloned(),
         time_req: time_req as u64,
-        desired_mechs: desired_mechs.iter().map(|m| Opaque::new(m.clone())).collect(),
+        desired_mechs: desired_mechs
+            .iter()
+            .map(|m| Opaque::new(m.clone()))
+            .collect(),
         cred_usage: cred_usage_to_gssx(cred_usage),
         options,
         ..Default::default()
@@ -679,7 +690,10 @@ pub fn release_cred(cred: &GssxCred) -> (u32, u32) {
     };
     if res.status.major_status != 0 {
         save_status(&res.status);
-        return (res.status.major_status as u32, res.status.minor_status as u32);
+        return (
+            res.status.major_status as u32,
+            res.status.minor_status as u32,
+        );
     }
     (GSS_S_COMPLETE, 0)
 }
@@ -699,7 +713,10 @@ pub fn delete_sec_context(ctx: &GssxCtx) -> (u32, u32) {
     };
     if res.status.major_status != 0 {
         save_status(&res.status);
-        return (res.status.major_status as u32, res.status.minor_status as u32);
+        return (
+            res.status.major_status as u32,
+            res.status.minor_status as u32,
+        );
     }
     (GSS_S_COMPLETE, 0)
 }
@@ -850,7 +867,12 @@ pub fn verify_mic(ctx: &GssxCtx, message: &[u8], token: &[u8]) -> (u32, u32, u32
 }
 
 /// `gpm_wrap_size_limit`: GSSX_WRAP_SIZE_LIMIT.
-pub fn wrap_size_limit(ctx: &GssxCtx, conf_req: bool, qop: u32, req_output_size: u32) -> (u32, u32, u32) {
+pub fn wrap_size_limit(
+    ctx: &GssxCtx,
+    conf_req: bool,
+    qop: u32,
+    req_output_size: u32,
+) -> (u32, u32, u32) {
     let arg = ArgWrapSizeLimit {
         context_handle: ctx.clone(),
         conf_req,

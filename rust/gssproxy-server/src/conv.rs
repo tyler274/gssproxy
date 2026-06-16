@@ -198,7 +198,9 @@ pub fn export_gssx_ctx(
 
     match exp_type {
         ExpCtxType::Partial => {
-            out.mech = partial_mech.map(|m| Opaque::new(m.to_vec())).unwrap_or_default();
+            out.mech = partial_mech
+                .map(|m| Opaque::new(m.to_vec()))
+                .unwrap_or_default();
             out.locally_initiated = true;
             out.open = false;
             out.exported_context_token = Opaque::new(ctx.export()?);

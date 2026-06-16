@@ -343,7 +343,9 @@ fn check_services(cfg: &Config) -> Result<()> {
     for (i, isvc) in cfg.services.iter().enumerate() {
         if let Some(prog) = &isvc.program {
             if !prog.starts_with('/') {
-                return Err(ConfigError::Invalid("Program paths must be absolute!".to_string()));
+                return Err(ConfigError::Invalid(
+                    "Program paths must be absolute!".to_string(),
+                ));
             }
             if prog.contains('|') {
                 return Err(ConfigError::Invalid(
@@ -679,27 +681,29 @@ mod prop_tests {
             prop::option::of("[a-z]{1,6}"),
             prop::option::of("[a-z]{1,6}"),
         )
-            .prop_map(|(euid, any_uid, program, socket, selinux_context)| Service {
-                name: "s".to_string(),
-                euid,
-                any_uid,
-                allow_proto_trans: false,
-                allow_const_deleg: false,
-                allow_cc_sync: false,
-                trusted: false,
-                kernel_nfsd: false,
-                impersonate: false,
-                socket,
-                selinux_context,
-                cred_usage: GSS_C_BOTH,
-                filter_flags: 0,
-                enforce_flags: 0,
-                min_lifetime: DEFAULT_MIN_LIFETIME,
-                program,
-                mechs: GP_CRED_KRB5,
-                krb5_principal: None,
-                krb5_store: Vec::new(),
-            })
+            .prop_map(
+                |(euid, any_uid, program, socket, selinux_context)| Service {
+                    name: "s".to_string(),
+                    euid,
+                    any_uid,
+                    allow_proto_trans: false,
+                    allow_const_deleg: false,
+                    allow_cc_sync: false,
+                    trusted: false,
+                    kernel_nfsd: false,
+                    impersonate: false,
+                    socket,
+                    selinux_context,
+                    cred_usage: GSS_C_BOTH,
+                    filter_flags: 0,
+                    enforce_flags: 0,
+                    min_lifetime: DEFAULT_MIN_LIFETIME,
+                    program,
+                    mechs: GP_CRED_KRB5,
+                    krb5_principal: None,
+                    krb5_store: Vec::new(),
+                },
+            )
     }
 
     fn arb_config() -> impl Strategy<Value = Config> {

@@ -330,7 +330,11 @@ fn acquire_cred_inner(
 pub fn init_sec_context(ctx: &CallContext, arg: ArgInitSecContext) -> ResInitSecContext {
     let mut res = ResInitSecContext::default();
     let mech = arg.mech_type.as_slice().to_vec();
-    let status_mech = if mech.is_empty() { None } else { Some(mech.as_slice()) };
+    let status_mech = if mech.is_empty() {
+        None
+    } else {
+        Some(mech.as_slice())
+    };
     match init_inner(ctx, &arg) {
         Ok((continue_needed, handle, token)) => {
             let major = if continue_needed {
@@ -406,7 +410,11 @@ fn init_inner(
 
     let req_flags = filter_flags(svc, arg.req_flags as u32);
     let cb = arg.input_cb.as_ref().map(to_cb);
-    let input = arg.input_token.as_ref().map(|b| b.as_slice()).unwrap_or(&[]);
+    let input = arg
+        .input_token
+        .as_ref()
+        .map(|b| b.as_slice())
+        .unwrap_or(&[]);
 
     let r = wrap::init_sec_context(
         cred.as_ref(),
@@ -443,7 +451,11 @@ pub fn accept_sec_context(ctx: &CallContext, arg: ArgAcceptSecContext) -> ResAcc
             } else {
                 0
             };
-            let status_mech = if mech.is_empty() { None } else { Some(mech.as_slice()) };
+            let status_mech = if mech.is_empty() {
+                None
+            } else {
+                Some(mech.as_slice())
+            };
             res.status = conv::status_to_gssx(major, 0, status_mech);
             res.context_handle = Some(handle);
             res.output_token = Some(token);
@@ -516,7 +528,13 @@ fn accept_inner(
         None
     };
 
-    Ok((r.continue_needed, handle_out, Opaque::new(output), deleg, mech))
+    Ok((
+        r.continue_needed,
+        handle_out,
+        Opaque::new(output),
+        deleg,
+        mech,
+    ))
 }
 
 /// The daemon is stateless (every handle is returned with `needs_release =
@@ -582,7 +600,11 @@ pub fn wrap_msg(_ctx: &CallContext, arg: ArgWrap) -> ResWrap {
     let exp_type = conv::exported_context_type(&arg.call_ctx.options);
     let inner = || -> Result<(GssxCtx, Vec<u8>, bool), GssError> {
         let context = conv::import_gssx_ctx(&arg.context_handle)?;
-        let input = arg.message_buffer.first().map(|b| b.as_slice()).unwrap_or(&[]);
+        let input = arg
+            .message_buffer
+            .first()
+            .map(|b| b.as_slice())
+            .unwrap_or(&[]);
         let (token, conf) = context.wrap(arg.conf_req, arg.qop_state as u32, input)?;
         let handle = conv::export_gssx_ctx(context, exp_type, None)?;
         Ok((handle, token, conf))
@@ -607,7 +629,11 @@ pub fn unwrap_msg(_ctx: &CallContext, arg: ArgUnwrap) -> ResUnwrap {
     let exp_type = conv::exported_context_type(&arg.call_ctx.options);
     let inner = || -> Result<(GssxCtx, Vec<u8>, bool), GssError> {
         let context = conv::import_gssx_ctx(&arg.context_handle)?;
-        let input = arg.token_buffer.first().map(|b| b.as_slice()).unwrap_or(&[]);
+        let input = arg
+            .token_buffer
+            .first()
+            .map(|b| b.as_slice())
+            .unwrap_or(&[]);
         let (message, conf, _qop) = context.unwrap(input)?;
         let handle = conv::export_gssx_ctx(context, exp_type, None)?;
         Ok((handle, message, conf))
@@ -631,7 +657,11 @@ pub fn wrap_size_limit(_ctx: &CallContext, arg: ArgWrapSizeLimit) -> ResWrapSize
     let mut res = ResWrapSizeLimit::default();
     let inner = || -> Result<u32, GssError> {
         let context = conv::import_gssx_ctx(&arg.context_handle)?;
-        context.wrap_size_limit(arg.conf_req, arg.qop_state as u32, arg.req_output_size as u32)
+        context.wrap_size_limit(
+            arg.conf_req,
+            arg.qop_state as u32,
+            arg.req_output_size as u32,
+        )
     };
     match inner() {
         Ok(max) => {

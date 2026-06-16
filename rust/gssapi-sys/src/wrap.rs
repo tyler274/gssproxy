@@ -11,9 +11,7 @@ use std::ptr;
 use std::slice;
 
 use libgssapi_sys as sys;
-use sys::{
-    gss_OID_desc, gss_buffer_desc, gss_cred_id_t, gss_ctx_id_t, gss_name_t, OM_uint32,
-};
+use sys::{gss_OID_desc, gss_buffer_desc, gss_cred_id_t, gss_ctx_id_t, gss_name_t, OM_uint32};
 
 use crate::consts;
 use crate::krb5;
@@ -139,7 +137,7 @@ impl OutputBuffer {
         if self.0.value.is_null() || self.0.length == 0 {
             &[]
         } else {
-            unsafe { slice::from_raw_parts(self.0.value as *const u8, self.0.length as usize) }
+            unsafe { slice::from_raw_parts(self.0.value as *const u8, self.0.length) }
         }
     }
 
@@ -206,8 +204,7 @@ impl Name {
     pub fn export_composite(&self) -> Result<Option<Vec<u8>>> {
         let mut out = OutputBuffer::empty();
         let mut minor: OM_uint32 = 0;
-        let major =
-            unsafe { sys::gss_export_name_composite(&mut minor, self.0, out.as_mut_ptr()) };
+        let major = unsafe { sys::gss_export_name_composite(&mut minor, self.0, out.as_mut_ptr()) };
         if major == consts::GSS_S_NAME_NOT_MN || major == consts::GSS_S_UNAVAILABLE {
             return Ok(None);
         }
@@ -259,8 +256,7 @@ impl Name {
     pub fn compare(&self, other: &Name) -> Result<bool> {
         let mut equal: c_int = 0;
         let mut minor: OM_uint32 = 0;
-        let major =
-            unsafe { sys::gss_compare_name(&mut minor, self.0, other.0, &mut equal) };
+        let major = unsafe { sys::gss_compare_name(&mut minor, self.0, other.0, &mut equal) };
         check(major, minor)?;
         Ok(equal != 0)
     }
@@ -270,6 +266,11 @@ impl Name {
     }
 
     /// Take ownership of a raw handle (caller must transfer sole ownership).
+    ///
+    /// # Safety
+    /// `name` must be a valid `gss_name_t` (or null) whose ownership is
+    /// transferred to the returned `Name`; it must not be used or freed
+    /// elsewhere afterwards.
     pub unsafe fn from_raw(name: gss_name_t) -> Name {
         Name(name)
     }
@@ -318,6 +319,10 @@ impl Cred {
         self.0
     }
 
+    /// # Safety
+    /// `cred` must be a valid `gss_cred_id_t` (or null) whose ownership is
+    /// transferred to the returned `Cred`; it must not be used or freed
+    /// elsewhere afterwards.
     pub unsafe fn from_raw(cred: gss_cred_id_t) -> Cred {
         Cred(cred)
     }
@@ -402,9 +407,8 @@ impl Cred {
         let mut desired = oid_desc(oid);
         let mut set: sys::gss_buffer_set_t = ptr::null_mut();
         let mut minor: OM_uint32 = 0;
-        let major = unsafe {
-            sys::gss_inquire_cred_by_oid(&mut minor, self.0, &mut desired, &mut set)
-        };
+        let major =
+            unsafe { sys::gss_inquire_cred_by_oid(&mut minor, self.0, &mut desired, &mut set) };
         if major == consts::GSS_S_UNAVAILABLE {
             return Ok(Vec::new());
         }
@@ -621,6 +625,10 @@ impl Context {
         self.0
     }
 
+    /// # Safety
+    /// `ctx` must be a valid `gss_ctx_id_t` (or null) whose ownership is
+    /// transferred to the returned `Context`; it must not be used or freed
+    /// elsewhere afterwards.
     pub unsafe fn from_raw(ctx: gss_ctx_id_t) -> Context {
         Context(ctx)
     }
@@ -637,7 +645,8 @@ impl Context {
     pub fn export(mut self) -> Result<Vec<u8>> {
         let mut out = OutputBuffer::empty();
         let mut minor: OM_uint32 = 0;
-        let major = unsafe { sys::gss_export_sec_context(&mut minor, &mut self.0, out.as_mut_ptr()) };
+        let major =
+            unsafe { sys::gss_export_sec_context(&mut minor, &mut self.0, out.as_mut_ptr()) };
         // The handle is consumed regardless; forget so Drop doesn't double-delete.
         self.0 = ptr::null_mut();
         check(major, minor)?;
@@ -681,7 +690,11 @@ impl Context {
         check(major, minor)?;
         Ok(ContextInfo {
             src_name: if src.is_null() { None } else { Some(Name(src)) },
-            targ_name: if targ.is_null() { None } else { Some(Name(targ)) },
+            targ_name: if targ.is_null() {
+                None
+            } else {
+                Some(Name(targ))
+            },
             lifetime,
             mech: unsafe { oid_to_vec(mech) },
             flags,
@@ -742,7 +755,14 @@ impl Context {
         let mut out = OutputBuffer::empty();
         let mut minor: OM_uint32 = 0;
         let major = unsafe {
-            sys::gss_unwrap(&mut minor, self.0, &mut tok, out.as_mut_ptr(), &mut conf, &mut qop)
+            sys::gss_unwrap(
+                &mut minor,
+                self.0,
+                &mut tok,
+                out.as_mut_ptr(),
+                &mut conf,
+                &mut qop,
+            )
         };
         check(major, minor)?;
         Ok((out.to_vec(), conf != 0, qop))
@@ -928,7 +948,11 @@ pub fn accept_sec_context(
         )
     };
     let context = Context(ctx_raw);
-    let delegated_cred = if deleg.is_null() { None } else { Some(Cred(deleg)) };
+    let delegated_cred = if deleg.is_null() {
+        None
+    } else {
+        Some(Cred(deleg))
+    };
     if is_error(major) {
         return Err(make_error(major, minor));
     }
@@ -990,7 +1014,7 @@ unsafe fn oid_to_vec(oid: sys::gss_OID) -> Vec<u8> {
 unsafe fn oid_set_drain(set: &mut sys::gss_OID_set) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     if !set.is_null() {
-        let count = (**set).count as usize;
+        let count = (**set).count;
         for i in 0..count {
             out.push(oid_to_vec((**set).elements.add(i)));
         }
@@ -1004,13 +1028,13 @@ unsafe fn oid_set_drain(set: &mut sys::gss_OID_set) -> Vec<Vec<u8>> {
 unsafe fn buffer_set_drain(set: &mut sys::gss_buffer_set_t) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     if !set.is_null() {
-        let count = (**set).count as usize;
+        let count = (**set).count;
         for i in 0..count {
             let elem = (**set).elements.add(i);
             let bytes = if (*elem).value.is_null() || (*elem).length == 0 {
                 Vec::new()
             } else {
-                slice::from_raw_parts((*elem).value as *const u8, (*elem).length as usize).to_vec()
+                slice::from_raw_parts((*elem).value as *const u8, (*elem).length).to_vec()
             };
             out.push(bytes);
         }
@@ -1030,8 +1054,11 @@ pub fn inquire_names_for_mech(mech: &[u8]) -> Result<Vec<Vec<u8>>> {
     Ok(unsafe { oid_set_drain(&mut set) })
 }
 
+/// A pair of OID-set members: `(mech_attrs, known_mech_attrs)`.
+pub type MechAttrSets = (Vec<Vec<u8>>, Vec<Vec<u8>>);
+
 /// `gss_inquire_attrs_for_mech`: returns `(mech_attrs, known_mech_attrs)`.
-pub fn inquire_attrs_for_mech(mech: &[u8]) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+pub fn inquire_attrs_for_mech(mech: &[u8]) -> Result<MechAttrSets> {
     let oid = oid_desc(mech);
     let mut mech_attrs: sys::gss_OID_set = ptr::null_mut();
     let mut known: sys::gss_OID_set = ptr::null_mut();

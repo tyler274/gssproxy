@@ -65,7 +65,14 @@ fn name() -> impl Strategy<Value = GssxName> {
         options(),
     )
         .prop_map(
-            |(display_name, name_type, exported_name, exported_composite_name, name_attributes, extensions)| {
+            |(
+                display_name,
+                name_type,
+                exported_name,
+                exported_composite_name,
+                name_attributes,
+                extensions,
+            )| {
                 GssxName {
                     display_name,
                     name_type,
@@ -119,7 +126,13 @@ fn call_ctx() -> impl Strategy<Value = GssxCallCtx> {
 
 fn cb() -> impl Strategy<Value = GssxCb> {
     (any::<u64>(), opaque(), any::<u64>(), opaque(), opaque()).prop_map(
-        |(initiator_addrtype, initiator_address, acceptor_addrtype, acceptor_address, application_data)| {
+        |(
+            initiator_addrtype,
+            initiator_address,
+            acceptor_addrtype,
+            acceptor_address,
+            application_data,
+        )| {
             GssxCb {
                 initiator_addrtype,
                 initiator_address,
@@ -193,12 +206,14 @@ fn cred() -> impl Strategy<Value = GssxCred> {
         opaque(),
         any::<bool>(),
     )
-        .prop_map(|(desired_name, elements, cred_handle_reference, needs_release)| GssxCred {
-            desired_name,
-            elements,
-            cred_handle_reference,
-            needs_release,
-        })
+        .prop_map(
+            |(desired_name, elements, cred_handle_reference, needs_release)| GssxCred {
+                desired_name,
+                elements,
+                cred_handle_reference,
+                needs_release,
+            },
+        )
 }
 
 fn handle() -> impl Strategy<Value = GssxHandle> {
@@ -345,7 +360,13 @@ fn arg_acquire_cred() -> impl Strategy<Value = ArgAcquireCred> {
             prop::option::of(name()),
             any::<u64>(),
         ),
-        (oid_set(), any::<i32>(), any::<u64>(), any::<u64>(), options()),
+        (
+            oid_set(),
+            any::<i32>(),
+            any::<u64>(),
+            any::<u64>(),
+            options(),
+        ),
     )
         .prop_map(
             |(
@@ -388,14 +409,20 @@ fn arg_export_cred() -> impl Strategy<Value = ArgExportCred> {
 }
 
 fn res_export_cred() -> impl Strategy<Value = ResExportCred> {
-    (status(), any::<i32>(), prop::option::of(opaque()), options()).prop_map(
-        |(status, usage_exported, exported_handle, options)| ResExportCred {
-            status,
-            usage_exported,
-            exported_handle,
-            options,
-        },
+    (
+        status(),
+        any::<i32>(),
+        prop::option::of(opaque()),
+        options(),
     )
+        .prop_map(
+            |(status, usage_exported, exported_handle, options)| ResExportCred {
+                status,
+                usage_exported,
+                exported_handle,
+                options,
+            },
+        )
 }
 
 fn arg_import_cred() -> impl Strategy<Value = ArgImportCred> {
@@ -429,7 +456,15 @@ fn arg_store_cred() -> impl Strategy<Value = ArgStoreCred> {
         options(),
     )
         .prop_map(
-            |(call_ctx, input_cred_handle, cred_usage, desired_mech, overwrite_cred, default_cred, options)| {
+            |(
+                call_ctx,
+                input_cred_handle,
+                cred_usage,
+                desired_mech,
+                overwrite_cred,
+                default_cred,
+                options,
+            )| {
                 ArgStoreCred {
                     call_ctx,
                     input_cred_handle,
@@ -497,12 +532,14 @@ fn res_init_sec_context() -> impl Strategy<Value = ResInitSecContext> {
         prop::option::of(opaque()),
         options(),
     )
-        .prop_map(|(status, context_handle, output_token, options)| ResInitSecContext {
-            status,
-            context_handle,
-            output_token,
-            options,
-        })
+        .prop_map(
+            |(status, context_handle, output_token, options)| ResInitSecContext {
+                status,
+                context_handle,
+                output_token,
+                options,
+            },
+        )
 }
 
 fn arg_accept_sec_context() -> impl Strategy<Value = ArgAcceptSecContext> {
@@ -516,7 +553,15 @@ fn arg_accept_sec_context() -> impl Strategy<Value = ArgAcceptSecContext> {
         options(),
     )
         .prop_map(
-            |(call_ctx, context_handle, cred_handle, input_token, input_cb, ret_deleg_cred, options)| {
+            |(
+                call_ctx,
+                context_handle,
+                cred_handle,
+                input_token,
+                input_cb,
+                ret_deleg_cred,
+                options,
+            )| {
                 ArgAcceptSecContext {
                     call_ctx,
                     context_handle,
@@ -569,12 +614,14 @@ fn res_get_mic() -> impl Strategy<Value = ResGetMic> {
         opaque(),
         prop::option::of(any::<u64>()),
     )
-        .prop_map(|(status, context_handle, token_buffer, qop_state)| ResGetMic {
-            status,
-            context_handle,
-            token_buffer,
-            qop_state,
-        })
+        .prop_map(
+            |(status, context_handle, token_buffer, qop_state)| ResGetMic {
+                status,
+                context_handle,
+                token_buffer,
+                qop_state,
+            },
+        )
 }
 
 fn arg_verify_mic() -> impl Strategy<Value = ArgVerifyMic> {
@@ -589,13 +636,16 @@ fn arg_verify_mic() -> impl Strategy<Value = ArgVerifyMic> {
 }
 
 fn res_verify_mic() -> impl Strategy<Value = ResVerifyMic> {
-    (status(), prop::option::of(ctx()), prop::option::of(any::<u64>())).prop_map(
-        |(status, context_handle, qop_state)| ResVerifyMic {
+    (
+        status(),
+        prop::option::of(ctx()),
+        prop::option::of(any::<u64>()),
+    )
+        .prop_map(|(status, context_handle, qop_state)| ResVerifyMic {
             status,
             context_handle,
             qop_state,
-        },
-    )
+        })
 }
 
 fn arg_wrap() -> impl Strategy<Value = ArgWrap> {
@@ -606,13 +656,15 @@ fn arg_wrap() -> impl Strategy<Value = ArgWrap> {
         prop::collection::vec(opaque(), 0..=MAXV),
         any::<u64>(),
     )
-        .prop_map(|(call_ctx, context_handle, conf_req, message_buffer, qop_state)| ArgWrap {
-            call_ctx,
-            context_handle,
-            conf_req,
-            message_buffer,
-            qop_state,
-        })
+        .prop_map(
+            |(call_ctx, context_handle, conf_req, message_buffer, qop_state)| ArgWrap {
+                call_ctx,
+                context_handle,
+                conf_req,
+                message_buffer,
+                qop_state,
+            },
+        )
 }
 
 fn res_wrap() -> impl Strategy<Value = ResWrap> {
@@ -623,13 +675,15 @@ fn res_wrap() -> impl Strategy<Value = ResWrap> {
         prop::option::of(any::<bool>()),
         prop::option::of(any::<u64>()),
     )
-        .prop_map(|(status, context_handle, token_buffer, conf_state, qop_state)| ResWrap {
-            status,
-            context_handle,
-            token_buffer,
-            conf_state,
-            qop_state,
-        })
+        .prop_map(
+            |(status, context_handle, token_buffer, conf_state, qop_state)| ResWrap {
+                status,
+                context_handle,
+                token_buffer,
+                conf_state,
+                qop_state,
+            },
+        )
 }
 
 fn arg_unwrap() -> impl Strategy<Value = ArgUnwrap> {
@@ -639,12 +693,14 @@ fn arg_unwrap() -> impl Strategy<Value = ArgUnwrap> {
         prop::collection::vec(opaque(), 0..=MAXV),
         any::<u64>(),
     )
-        .prop_map(|(call_ctx, context_handle, token_buffer, qop_state)| ArgUnwrap {
-            call_ctx,
-            context_handle,
-            token_buffer,
-            qop_state,
-        })
+        .prop_map(
+            |(call_ctx, context_handle, token_buffer, qop_state)| ArgUnwrap {
+                call_ctx,
+                context_handle,
+                token_buffer,
+                qop_state,
+            },
+        )
 }
 
 fn res_unwrap() -> impl Strategy<Value = ResUnwrap> {
@@ -655,13 +711,15 @@ fn res_unwrap() -> impl Strategy<Value = ResUnwrap> {
         prop::option::of(any::<bool>()),
         prop::option::of(any::<u64>()),
     )
-        .prop_map(|(status, context_handle, message_buffer, conf_state, qop_state)| ResUnwrap {
-            status,
-            context_handle,
-            message_buffer,
-            conf_state,
-            qop_state,
-        })
+        .prop_map(
+            |(status, context_handle, message_buffer, conf_state, qop_state)| ResUnwrap {
+                status,
+                context_handle,
+                message_buffer,
+                conf_state,
+                qop_state,
+            },
+        )
 }
 
 fn arg_wrap_size_limit() -> impl Strategy<Value = ArgWrapSizeLimit> {
@@ -715,15 +773,21 @@ fn call_header() -> impl Strategy<Value = CallHeader> {
 fn reply_body() -> impl Strategy<Value = ReplyBody> {
     prop_oneof![
         opaque_auth().prop_map(|verf| ReplyBody::AcceptedSuccess { verf }),
-        (opaque_auth(), any::<u32>(), any::<u32>())
-            .prop_map(|(verf, low, high)| ReplyBody::ProgMismatch { verf, info: MismatchInfo { low, high } }),
+        (opaque_auth(), any::<u32>(), any::<u32>()).prop_map(|(verf, low, high)| {
+            ReplyBody::ProgMismatch {
+                verf,
+                info: MismatchInfo { low, high },
+            }
+        }),
         (
             opaque_auth(),
             any::<i32>().prop_filter("not success/mismatch", |s| *s != 0 && *s != 2)
         )
             .prop_map(|(verf, status)| ReplyBody::AcceptedOther { verf, status }),
-        (any::<i32>(), any::<i32>())
-            .prop_map(|(reject_status, value)| ReplyBody::Denied { reject_status, value }),
+        (any::<i32>(), any::<i32>()).prop_map(|(reject_status, value)| ReplyBody::Denied {
+            reject_status,
+            value
+        }),
     ]
 }
 

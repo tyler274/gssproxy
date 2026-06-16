@@ -13,9 +13,7 @@ use gssproxy_client::gpm;
 use crate::behavior::{self, Behavior};
 use crate::convert;
 use crate::error::map_error;
-use crate::handle::{
-    name_to_local, store_remote_creds, CredHandle, NameHandle,
-};
+use crate::handle::{name_to_local, store_remote_creds, CredHandle, NameHandle};
 use crate::{handle, special};
 
 const COMPLETE: u32 = 0;
@@ -51,16 +49,17 @@ unsafe fn acquire_local(
 
     let name_local = match name {
         Some(n) => {
-            if n.local.is_null() && n.remote.is_some() {
+            if n.local.is_null() {
                 let mech = n.mech_ptr();
-                let r = n.remote.as_mut().unwrap();
-                let (maj, min, local) = name_to_local(r, mech);
-                if maj != COMPLETE {
-                    let mut m: OM_uint32 = 0;
-                    sys::gss_release_oid_set(&mut m, &mut special);
-                    return (maj, min);
+                if let Some(r) = n.remote.as_mut() {
+                    let (maj, min, local) = name_to_local(r, mech);
+                    if maj != COMPLETE {
+                        let mut m: OM_uint32 = 0;
+                        sys::gss_release_oid_set(&mut m, &mut special);
+                        return (maj, min);
+                    }
+                    n.local = local;
                 }
-                n.local = local;
             }
             n.local
         }
@@ -170,7 +169,14 @@ pub unsafe extern "C" fn gssi_acquire_cred_from(
     if behavior == Behavior::LocalOnly || behavior == Behavior::LocalFirst {
         let nref = NameHandle::as_mut(desired_name);
         let (m, mi) = acquire_local(
-            None, nref, time_req, desired_mechs, cred_usage, cred_store, &mut out, actual_mechs,
+            None,
+            nref,
+            time_req,
+            desired_mechs,
+            cred_usage,
+            cred_store,
+            &mut out,
+            actual_mechs,
             time_rec,
         );
         maj = m;
@@ -211,7 +217,12 @@ pub unsafe extern "C" fn gssi_acquire_cred_from(
             let mechs = out
                 .remote
                 .as_ref()
-                .map(|c| c.elements.iter().map(|e| e.mech.as_slice().to_vec()).collect::<Vec<_>>())
+                .map(|c| {
+                    c.elements
+                        .iter()
+                        .map(|e| e.mech.as_slice().to_vec())
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             convert::write_actual_mechs(actual_mechs, &mechs);
         }
@@ -234,7 +245,14 @@ pub unsafe extern "C" fn gssi_acquire_cred_from(
         tmin = min;
         let nref = NameHandle::as_mut(desired_name);
         let (m, mi) = acquire_local(
-            None, nref, time_req, desired_mechs, cred_usage, cred_store, &mut out, actual_mechs,
+            None,
+            nref,
+            time_req,
+            desired_mechs,
+            cred_usage,
+            cred_store,
+            &mut out,
+            actual_mechs,
             time_rec,
         );
         maj = m;
@@ -353,10 +371,12 @@ pub unsafe extern "C" fn gssi_add_cred_from(
         &mut time_rec,
     );
     if maj == COMPLETE {
-        if !acceptor_time_rec.is_null() && (cred_usage == GSS_C_ACCEPT || cred_usage == GSS_C_BOTH) {
+        if !acceptor_time_rec.is_null() && (cred_usage == GSS_C_ACCEPT || cred_usage == GSS_C_BOTH)
+        {
             *acceptor_time_rec = time_rec;
         }
-        if !initiator_time_rec.is_null() && (cred_usage == GSS_C_INITIATE || cred_usage == GSS_C_BOTH)
+        if !initiator_time_rec.is_null()
+            && (cred_usage == GSS_C_INITIATE || cred_usage == GSS_C_BOTH)
         {
             *initiator_time_rec = time_rec;
         }
@@ -405,17 +425,18 @@ pub unsafe extern "C" fn gssi_acquire_cred_with_password(
             if special.is_null() {
                 (consts::GSS_S_FAILURE, libc::EINVAL as u32)
             } else {
-                if name.local.is_null() && name.remote.is_some() {
+                if name.local.is_null() {
                     let mech = name.mech_ptr();
-                    let r = name.remote.as_mut().unwrap();
-                    let (m, mi, local) = name_to_local(r, mech);
-                    if m != COMPLETE {
-                        let mut z: OM_uint32 = 0;
-                        sys::gss_release_oid_set(&mut z, &mut special);
-                        set_min(minor_status, mi);
-                        return m;
+                    if let Some(r) = name.remote.as_mut() {
+                        let (m, mi, local) = name_to_local(r, mech);
+                        if m != COMPLETE {
+                            let mut z: OM_uint32 = 0;
+                            sys::gss_release_oid_set(&mut z, &mut special);
+                            set_min(minor_status, mi);
+                            return m;
+                        }
+                        name.local = local;
                     }
-                    name.local = local;
                 }
                 let mut min: OM_uint32 = 0;
                 let maj = sys::gss_acquire_cred_with_password(
@@ -537,7 +558,12 @@ pub unsafe extern "C" fn gssi_acquire_cred_impersonate_name(
             let mechs = out
                 .remote
                 .as_ref()
-                .map(|c| c.elements.iter().map(|e| e.mech.as_slice().to_vec()).collect::<Vec<_>>())
+                .map(|c| {
+                    c.elements
+                        .iter()
+                        .map(|e| e.mech.as_slice().to_vec())
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             convert::write_actual_mechs(actual_mechs, &mechs);
         }
@@ -605,7 +631,11 @@ pub unsafe extern "C" fn gssi_inquire_cred(
         let m = sys::gss_inquire_cred(
             &mut min,
             cred.local,
-            if name.is_null() { ptr::null_mut() } else { &mut gpname.local },
+            if name.is_null() {
+                ptr::null_mut()
+            } else {
+                &mut gpname.local
+            },
             lifetime,
             cred_usage,
             mechanisms,
@@ -673,7 +703,11 @@ pub unsafe extern "C" fn gssi_inquire_cred_by_mech(
             &mut min,
             cred.local,
             special::special_mech(mech_type as *const _),
-            if name.is_null() { ptr::null_mut() } else { &mut gpname.local },
+            if name.is_null() {
+                ptr::null_mut()
+            } else {
+                &mut gpname.local
+            },
             initiator_lifetime,
             acceptor_lifetime,
             cred_usage,
@@ -863,7 +897,11 @@ pub unsafe extern "C" fn gssi_release_cred(
     drop(handle);
     *cred_handle = ptr::null_mut();
 
-    let (maj, min) = if tmaj != COMPLETE { (tmaj, tmin) } else { (COMPLETE, 0) };
+    let (maj, min) = if tmaj != COMPLETE {
+        (tmaj, tmin)
+    } else {
+        (COMPLETE, 0)
+    };
     if !minor_status.is_null() {
         *minor_status = min;
     }

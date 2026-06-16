@@ -32,7 +32,10 @@ fn version_exits_zero_with_output() {
     assert!(out.status.success(), "--version should exit 0");
     assert!(!out.stdout.is_empty(), "--version should print something");
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains(env!("CARGO_PKG_VERSION")), "version output: {s:?}");
+    assert!(
+        s.contains(env!("CARGO_PKG_VERSION")),
+        "version output: {s:?}"
+    );
 }
 
 #[test]
@@ -45,7 +48,10 @@ fn help_exits_zero() {
 
 #[test]
 fn unknown_option_exits_nonzero_with_usage() {
-    let out = Command::new(bin()).arg("--definitely-not-a-flag").output().unwrap();
+    let out = Command::new(bin())
+        .arg("--definitely-not-a-flag")
+        .output()
+        .unwrap();
     assert!(!out.status.success(), "unknown option should fail");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("Usage:"), "stderr should show usage: {err:?}");
@@ -79,7 +85,13 @@ fn starts_and_prints_initialization_complete() {
     std::fs::write(&conf, "[service/test]\n  mechs = krb5\n  euid = 0\n").unwrap();
 
     let mut child = Command::new(bin())
-        .args(["-i", "-s", sock.to_str().unwrap(), "-c", conf.to_str().unwrap()])
+        .args([
+            "-i",
+            "-s",
+            sock.to_str().unwrap(),
+            "-c",
+            conf.to_str().unwrap(),
+        ])
         .stderr(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()

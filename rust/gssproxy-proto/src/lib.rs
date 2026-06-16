@@ -69,7 +69,11 @@ mod tests {
         // Hand-computed byte vector for encode_request(xid=1, proc=1, default
         // ArgIndicateMechs), derived directly from the XDR rules. This locks
         // the envelope layout, crucially the program number 400112 = 0x61AF0.
-        let body = encode_request(1, proc::GssxProc::IndicateMechs as u32, &ArgIndicateMechs::default());
+        let body = encode_request(
+            1,
+            proc::GssxProc::IndicateMechs as u32,
+            &ArgIndicateMechs::default(),
+        );
         #[rustfmt::skip]
         let expected: &[u8] = &[
             0x00, 0x00, 0x00, 0x01, // xid = 1

@@ -192,7 +192,7 @@ async fn handle_conn(mut stream: UnixStream, ctx: CallContext) -> io::Result<()>
         let ctx = ctx.clone();
         let reply = tokio::task::spawn_blocking(move || dispatch::handle_request(&ctx, &body))
             .await
-            .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         if let Some(reply_body) = reply {
             stream.write_all(&frame(&reply_body)).await?;

@@ -3,10 +3,8 @@
 
 use std::ptr;
 
-use gssapi_sys::sys::{
-    self, gss_OID, gss_buffer_set_t, gss_buffer_t, gss_name_t, OM_uint32,
-};
 use gssapi_sys::consts;
+use gssapi_sys::sys::{self, gss_OID, gss_buffer_set_t, gss_buffer_t, gss_name_t, OM_uint32};
 use gssproxy_client::gpm;
 
 use crate::convert;
@@ -418,28 +416,30 @@ pub unsafe extern "C" fn gssi_localname(
     let mut maj = COMPLETE;
     let mut min = 0u32;
 
-    if gpname.remote.is_some() {
+    if let Some(remote) = gpname.remote.as_ref() {
         let mech_bytes = convert::oid_bytes(mech_type).unwrap_or(&[]).to_vec();
-        let (m, mi, out) = gpm::localname(gpname.remote.as_ref().unwrap(), &mech_bytes);
+        let (m, mi, out) = gpm::localname(remote, &mech_bytes);
         if m == COMPLETE {
             if let Some(buf) = out {
                 convert::write_buffer(localname, &buf);
             }
             set_min(minor_status, mi);
             return m;
-        } else if m == consts::GSS_S_FAILURE && mi == libc::ENOTSUP as u32 {
-            if gpname.local.is_null() {
-                let r = gpname.remote.as_mut().unwrap();
-                let (nm, nmi, local) = name_to_local(r, mech_type);
-                if nm != COMPLETE {
-                    set_min(minor_status, nmi);
-                    return nm;
-                }
-                gpname.local = local;
-            }
-        } else {
+        } else if m != consts::GSS_S_FAILURE || mi != libc::ENOTSUP as u32 {
             set_min(minor_status, mi);
             return m;
+        }
+        // ENOTSUP: the daemon can't map it; fall back to a local conversion.
+    }
+
+    if gpname.local.is_null() {
+        if let Some(r) = gpname.remote.as_mut() {
+            let (nm, nmi, local) = name_to_local(r, mech_type);
+            if nm != COMPLETE {
+                set_min(minor_status, nmi);
+                return nm;
+            }
+            gpname.local = local;
         }
     }
 
@@ -471,15 +471,16 @@ pub unsafe extern "C" fn gssi_authorize_localname(
         None => return consts::GSS_S_CALL_INACCESSIBLE_READ,
     };
 
-    if gpname.remote.is_some() && gpname.local.is_null() {
+    if gpname.local.is_null() {
         let mech = gpname.mech_ptr();
-        let r = gpname.remote.as_mut().unwrap();
-        let (m, mi, local) = name_to_local(r, mech);
-        if m != COMPLETE {
-            set_min(minor_status, mi);
-            return m;
+        if let Some(r) = gpname.remote.as_mut() {
+            let (m, mi, local) = name_to_local(r, mech);
+            if m != COMPLETE {
+                set_min(minor_status, mi);
+                return m;
+            }
+            gpname.local = local;
         }
-        gpname.local = local;
     }
 
     let mut min: OM_uint32 = 0;
@@ -516,15 +517,16 @@ pub unsafe extern "C" fn gssi_map_name_to_any(
         None => return consts::GSS_S_CALL_INACCESSIBLE_READ,
     };
 
-    if gpname.remote.is_some() && gpname.local.is_null() {
+    if gpname.local.is_null() {
         let mech = gpname.mech_ptr();
-        let r = gpname.remote.as_mut().unwrap();
-        let (m, mi, local) = name_to_local(r, mech);
-        if m != COMPLETE {
-            set_min(minor_status, mi);
-            return m;
+        if let Some(r) = gpname.remote.as_mut() {
+            let (m, mi, local) = name_to_local(r, mech);
+            if m != COMPLETE {
+                set_min(minor_status, mi);
+                return m;
+            }
+            gpname.local = local;
         }
-        gpname.local = local;
     }
 
     let mut min: OM_uint32 = 0;
